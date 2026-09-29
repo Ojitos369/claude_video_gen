@@ -1,4 +1,4 @@
-# Videos con letra sincronizada
+# Videos con Claude
 
 Un solo entorno (`.venv`) y un motor común (`engine/`); cada video vive en `projects/<nombre>/` con sus propias instrucciones.
 Reglas generales y lecciones aprendidas: `CLAUDE.md`.
