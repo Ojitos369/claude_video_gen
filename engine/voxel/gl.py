@@ -1,4 +1,4 @@
-# Offscreen OpenGL (moderngl + EGL) voxel renderer. Everything is a pure function of time t:
+# Offscreen OpenGL (moderngl; EGL on Linux, WGL on Windows) voxel renderer. Everything is a pure function of time t:
 # scene A -> scene B morph, per-voxel motion, audio-reactive lights, sun shadows (PCF), sky, height fog, bloom, sun rays, ACES.
 import math
 import numpy as np
@@ -229,7 +229,8 @@ def look_at(eye, tgt, up=(0, 1, 0)):
 class Renderer:
     def __init__(self, W, H, N, R, vs, shadow_size=4096, samples=4):
         self.W, self.H, self.N, self.R, self.vs = W, H, N, R, vs
-        self.ctx = ctx = moderngl.create_standalone_context(backend="egl")
+        import sys   # headless GL: EGL on Linux (no X needed); the default (WGL / CGL) on Windows and macOS
+        self.ctx = ctx = moderngl.create_standalone_context(backend="egl") if sys.platform.startswith("linux") else moderngl.create_standalone_context()
         ctx.enable(moderngl.DEPTH_TEST | moderngl.CULL_FACE)
         self.prog = ctx.program(vertex_shader=VOX_VS, fragment_shader=VOX_FS)
         self.sprog = ctx.program(vertex_shader=VOX_VS, fragment_shader=SHADOW_FS)

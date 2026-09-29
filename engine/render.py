@@ -1,4 +1,5 @@
-# Lyric video renderer: procedural scenes (engine/scenes + optional <project>/scenes.py) + karaoke lyrics, h264_nvenc.
+# Lyric video renderer: procedural scenes (engine/scenes + optional <project>/scenes.py) + karaoke lyrics.
+# H.264 encoder = the best one that works on this machine (settings.local.json -> machine.video_encoder).
 #   python engine/render.py <project> --frame 60.2 [..]     -> render/frame_060.20.png (stills for checks)
 #   python engine/render.py <project> --preview 119.5 139.5 -> out/preview.mp4
 #   python engine/render.py <project> [--force]             -> render/seg_*.mp4 (resumable) + out/<output>
@@ -8,7 +9,7 @@ import argparse, json, math, os, subprocess, sys
 from multiprocessing import Pool
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
-from common import project_from_argv, audio_codec
+from common import project_from_argv, audio_codec, video_encoder_args
 from engine import timing, scenes as scene_lib
 from engine.timing import snap, pulse, en
 
@@ -16,8 +17,8 @@ PR = project_from_argv()
 CFG = PR.cfg
 P = PR.p
 W, H, FPS = CFG["width"], CFG["height"], CFG["fps"]
-BW, BH = 540, 960            # scene design canvas (vertical). 9:16 output = plain upscale;
-VERTICAL = abs(W / H - 9 / 16) < 0.01   # other formats: scene centred over a blurred, enlarged copy of itself
+BW, BH = CFG.get("scene_canvas") or (540, 960)   # scene design canvas (default vertical 540x960; e.g. [540, 540] for 1:1). Same aspect as output = plain upscale;
+VERTICAL = abs(W / H - BW / BH) < 0.01   # other formats: scene centred over a blurred, enlarged copy of itself
 S = min(W, H) / 1080         # text scale relative to the 1080-wide design
 SEG = CFG["segment_seconds"]
 
@@ -289,8 +290,7 @@ def frame(fi, bg=None):
 # ---------------------------------------------------------------- encode
 def ff_writer(path):
     return subprocess.Popen(["ffmpeg", "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}", "-r", str(FPS), "-i", "-",
-                             "-c:v", "h264_nvenc", "-preset", "p6", "-rc", "vbr", "-cq", str(CFG["nvenc_cq"]), "-b:v", "0", "-profile:v", "high",
-                             "-pix_fmt", "yuv420p", path], stdin=subprocess.PIPE)
+                             *video_encoder_args(PR.machine, CFG["nvenc_cq"]), "-pix_fmt", "yuv420p", path], stdin=subprocess.PIPE)
 
 def render_range(args):
     f0, f1, path = args

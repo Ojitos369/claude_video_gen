@@ -27,7 +27,8 @@ DEFAULTS = {
     "caption_position": "center",  # center | bottom (lower third, e.g. subtitles for narration)
     "voice": None,                 # separate clean voice/narration file: used instead of Demucs vocals for transcription/alignment
     "beats_audio": None,           # file analysed by beats.py (default: the project audio), e.g. a music bed
-    "segment_seconds": 10, "jobs": 6,
+    "scene_canvas": None,          # [w, h] design canvas of scenes (default [540, 960]); use [540, 540] for 1:1 projects
+    "segment_seconds": 10, "jobs": None,          # None: machine.render_jobs from settings.local.json
     "nvenc_cq": 19, "audio_bitrate": "320k",
     "whisper_model": "large-v3",
 }
@@ -45,6 +46,9 @@ class Project:
             if not aud: sys.exit("no audio file in project folder")
             self.cfg["audio"] = aud[0]
         self.stem = os.path.splitext(self.cfg["audio"])[0]
+        self.machine = machine_info()
+        if not self.cfg["jobs"]:
+            self.cfg["jobs"] = self.machine.get("render_jobs") or max(1, (os.cpu_count() or 2) // 3)
         self.variant = ""
         if aspect:
             self.cfg.update(aspect=aspect, width=None, height=None); self.variant = aspect.replace(":", "x")
@@ -91,6 +95,23 @@ class Project:
         b, e = os.path.splitext(name); return self.p("out", f"{b}_{self.variant}{e}" if self.variant else name)
     @property
     def output(self): return self.out_name(self.cfg["output"] or f"{self.name}.mp4")
+
+def machine_info():
+    """Host details from settings.local.json (detected when the service starts; detected here if missing)."""
+    try:
+        from engine.tools import local_settings, machine
+        return local_settings.load().get("machine") or machine.ensure()[0]
+    except Exception:
+        return {}
+
+def video_encoder_args(machine, cq):
+    """ffmpeg args for the best working H.264 encoder of this machine (NVENC > QSV > AMF > VideoToolbox > x264)."""
+    enc = (machine or {}).get("video_encoder") or "libx264"
+    if enc == "h264_nvenc": return ["-c:v", enc, "-preset", "p6", "-rc", "vbr", "-cq", str(cq), "-b:v", "0", "-profile:v", "high"]
+    if enc == "h264_qsv": return ["-c:v", enc, "-global_quality", str(cq), "-preset", "slow"]
+    if enc == "h264_amf": return ["-c:v", enc, "-rc", "cqp", "-qp_i", str(cq), "-qp_p", str(cq), "-quality", "quality"]
+    if enc == "h264_videotoolbox": return ["-c:v", enc, "-q:v", "65"]
+    return ["-c:v", "libx264", "-preset", "medium", "-crf", str(max(16, cq - 1))]
 
 def probe_video(path):
     import subprocess

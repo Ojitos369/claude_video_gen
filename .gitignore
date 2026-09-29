@@ -1,11 +1,28 @@
-# Only the base engine is versioned. Projects and CLAUDE.md stay local.
-
+# Versioned: engine, app (back + front) and docs. Projects and CLAUDE.md stay local.
 CLAUDE.md
 projects/
+# local settings: API keys, access token, machine details
+settings.local.json
+*.local.json
 
 .venv/
 __pycache__/
 *.pyc
+*.env
+.env
+.playwright-mcp/
+logs/
+
+# front
+front/node_modules/
+front/dist/
+*.pnpm-store*
+
+# back media: only the built front and the base pages are versioned
+/back/media/*
+!/back/media/stay
+!/back/media/pages
+!/back/media/dist
 
 # media (inputs and outputs)
 *.mp3
