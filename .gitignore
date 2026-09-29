@@ -1,0 +1,22 @@
+# Only the base engine is versioned. Projects and CLAUDE.md stay local.
+
+CLAUDE.md
+projects/
+
+.venv/
+__pycache__/
+*.pyc
+
+# media (inputs and outputs)
+*.mp3
+*.wav
+*.flac
+*.m4a
+*.ogg
+*.mp4
+*.mkv
+*.mov
+*.webm
+*.png
+*.jpg
+*.jpeg
