@@ -4,7 +4,7 @@ import Timeline, { buildItems } from './Timeline.jsx'
 import Results from './Results.jsx'
 import Markdown from './Markdown.jsx'
 import StatusBadge from './StatusBadge.jsx'
-import { Send, Stop, Trash, Film, FileText, List, Pencil, Check, X } from './Icons.jsx'
+import { Send, Stop, Trash, Film, FileText, List, Pencil, Check, X, Clip, Upload } from './Icons.jsx'
 import ModelSelect, { modelLabel } from './ModelSelect.jsx'
 
 const ACTIVE = ['running', 'queued']
@@ -16,6 +16,15 @@ export default function JobView({ id, models, efforts, onDeleted }) {
   const [tab, setTab] = useState('result')
   const [mtab, setMtab] = useState('feed')   // phone: one panel at a time
   const [text, setText] = useState('')
+  const [files, setFiles] = useState([])            // files to add with the next change request
+  const [sending, setSending] = useState(null)      // upload progress 0..1 while sending
+  const [drag, setDrag] = useState(false)
+  const picker = useRef(null)
+  const depth = useRef(0)
+  const addFiles = (list) => {
+    const incoming = Array.from(list || [])
+    setFiles((fs) => [...fs, ...incoming.filter((f) => !fs.some((g) => g.name === f.name && g.size === f.size))])
+  }
   const [model, setModel] = useState('')
   const [effort, setEffort] = useState('')
   const [editing, setEditing] = useState(false)
@@ -73,11 +82,15 @@ export default function JobView({ id, models, efforts, onDeleted }) {
   const elapsed = started ? (now / 1000 - started) : null
   const totalMs = runs.reduce((s, r) => s + (r.duration_ms || 0), 0)
 
+  const canSend = !running && sending === null && (text.trim() || files.length)
   const send = async (e) => {
     e.preventDefault()
-    if (!text.trim()) return
-    setError('')
-    try { await api.message(id, text.trim(), model || job.model, effort || job.effort); setText(''); reload() } catch (err) { setError(err.message) }
+    if (!canSend) return
+    setError(''); setSending(0)
+    try {
+      await api.message(id, { text: text.trim(), model: model || job.model, effort: effort || job.effort, files }, setSending)
+      setText(''); setFiles([]); reload()
+    } catch (err) { setError(err.message) } finally { setSending(null) }
   }
   const saveName = async (e) => {
     e?.preventDefault()
@@ -143,7 +156,12 @@ export default function JobView({ id, models, efforts, onDeleted }) {
         ))}
       </nav>
       <div className="job-grid" data-m={mtab}>
-        <section className="panel panel-feed">
+        <section className="panel panel-feed"
+          onDragEnter={(e) => { if (running) return; e.preventDefault(); depth.current++; setDrag(true) }}
+          onDragOver={(e) => !running && e.preventDefault()}
+          onDragLeave={() => { depth.current = Math.max(0, depth.current - 1); if (!depth.current) setDrag(false) }}
+          onDrop={(e) => { if (running) return; e.preventDefault(); depth.current = 0; setDrag(false); addFiles(e.dataTransfer.files) }}>
+          {drag && <div className="drop-overlay"><Upload /> Suelta para agregar al proyecto</div>}
           <div className="panel-head"><h2>Proceso</h2><span className="muted">{items.filter((i) => i.type === 'tool').length} pasos</span></div>
           <div className="feed" ref={scroller} onScroll={(e) => {
             const el = e.currentTarget
@@ -153,13 +171,30 @@ export default function JobView({ id, models, efforts, onDeleted }) {
             {running && <div className="typing"><span /><span /><span /></div>}
           </div>
           <form className="composer" onSubmit={send}>
+            {files.length > 0 && (
+              <ul className="file-chips composer-files">
+                {files.map((f, i) => (
+                  <li key={f.name + f.size} className="chip">
+                    <span className="chip-icon">{/^(audio|video)/.test(f.type) ? <Film /> : <FileText />}</span>
+                    <span className="chip-name" title={f.name}>{f.name}</span>
+                    <span className="muted">{fmtSize(f.size)}</span>
+                    <button type="button" className="icon-btn" aria-label={`Quitar ${f.name}`} disabled={sending !== null}
+                      onClick={() => setFiles((fs) => fs.filter((_, j) => j !== i))}><X /></button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {sending !== null && files.length > 0 && <div className="upload-bar"><i style={{ width: `${Math.round(sending * 100)}%` }} /></div>}
+            <input ref={picker} type="file" multiple hidden onChange={(e) => { addFiles(e.target.files); e.target.value = '' }} />
+            <button type="button" className="icon-btn composer-attach" aria-label="Agregar archivos" title="Agregar archivos al proyecto"
+              disabled={running || sending !== null} onClick={() => picker.current?.click()}><Clip /></button>
             <textarea value={text} onChange={(e) => setText(e.target.value)} rows={2} disabled={running}
-              placeholder={running ? 'Espera a que termine para pedir cambios…' : 'Pide cambios o da más instrucciones (continúa la misma sesión)…'}
+              placeholder={running ? 'Espera a que termine para pedir cambios…' : 'Pide cambios o agrega archivos (Claude conserva el contexto del proyecto)…'}
               onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) send(e) }} />
             <div className="composer-side">
               <ModelSelect compact models={models} value={model || job.model} onChange={setModel} disabled={running} />
               <ModelSelect compact models={efforts} value={effort || job.effort} onChange={setEffort} disabled={running} label="Esfuerzo" aria="Esfuerzo de Claude" />
-              <button className="btn btn-primary" disabled={running || !text.trim()} aria-label="Enviar"><Send /></button>
+              <button className="btn btn-primary" disabled={!canSend} aria-label="Enviar">{sending !== null ? <span className="spinner" /> : <Send />}</button>
             </div>
           </form>
           {error && <div className="notice notice-bad">{error}</div>}

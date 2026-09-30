@@ -43,8 +43,8 @@ export default function NewJob({ status, settings, onCreated }) {
   const [aspect, setAspect] = useState('9:16')
   const [aspectText, setAspectText] = useState('')
   const [tools, setTools] = useState(null)                 // null = defaults from the settings
-  const gen = tools || settings?.generation || { images: true, tts: false }
-  const imgProv = settings?.images?.provider || 'none', ttsProv = settings?.tts?.provider || 'none'
+  const gen = tools || settings?.generation || { images: true, tts: false, music: false }
+  const imgProv = settings?.images?.provider || 'none', ttsProv = settings?.tts?.provider || 'none', musProv = settings?.music?.provider || 'none'
   const [aspectAuto, setAspectAuto] = useState(true)   // follows the uploaded video until the user picks one
   const [dims, setDims] = useState({})                 // file key -> {w, h}
   const key = (f) => `${f.name}:${f.size}`
@@ -156,7 +156,7 @@ export default function NewJob({ status, settings, onCreated }) {
       )}
       <fieldset className="tools">
         <legend>Herramientas que Claude puede usar</legend>
-        {[['images', 'Generar imágenes', imgProv, settings?.catalog?.images], ['tts', 'Generar voz', ttsProv, settings?.catalog?.tts]].map(([k, label, prov, cat]) => (
+        {[['images', 'Generar imágenes', imgProv, settings?.catalog?.images], ['tts', 'Generar voz', ttsProv, settings?.catalog?.tts], ['music', 'Generar música', musProv, settings?.catalog?.music]].map(([k, label, prov, cat]) => (
           <label key={k} className={`toggle ${prov === 'none' ? 'is-disabled' : ''}`}>
             <input type="checkbox" checked={!!gen[k] && prov !== 'none'} disabled={busy || prov === 'none'}
               onChange={(e) => setTools({ ...gen, [k]: e.target.checked })} />

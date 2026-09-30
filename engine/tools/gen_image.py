@@ -3,6 +3,7 @@
 #   python engine/tools/gen_image.py <project> "prompt" --out assets/fondo.png [--aspect 9:16] [--transparent] [--ref img.png]
 # Providers: google (Gemini image models, API key) · openai (API key, or the ChatGPT subscription through the Codex CLI).
 # Every image is logged in projects/<id>/assets/images.json (prompt, provider, model) and counted against images.max_per_project.
+# Each request / answer / image is also kept in projects/<id>/assets/{gemini-image,openai-image,openai-codex}/ (engine/tools/apilog.py).
 import argparse
 import base64
 import glob
@@ -19,20 +20,25 @@ import urllib.request
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from engine.tools import local_settings  # noqa: E402
 from engine.tools.binaries import find_cli, command  # noqa: E402
+from engine.tools.apilog import Call  # noqa: E402
 
 DEFAULT_MODEL = {"google": "gemini-2.5-flash-image", "openai": "gpt-image-1"}
 
 
-def post_json(url, body, headers, timeout=300):
+def post_json(url, body, headers, rec, timeout=300):
     req = urllib.request.Request(url, data=json.dumps(body).encode(), headers={"Content-Type": "application/json", **headers})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
-            return json.loads(r.read())
+            d = json.loads(r.read())
+            rec.response(d, status=r.status)
+            return d
     except urllib.error.HTTPError as e:
-        raise SystemExit(f"error {e.code} de la API: {e.read().decode(errors='replace')[:800]}")
+        err = e.read().decode(errors="replace")
+        rec.response(err, status=e.code)
+        raise SystemExit(f"error {e.code} de la API: {err[:800]}")
 
 
-def google(prompt, model, aspect, ref):
+def google(prompt, model, aspect, ref, proj):
     k = local_settings.key("google")
     if not k: raise SystemExit("Falta la API key de Google (ajustes de la app)")
     parts = [{"text": prompt}]
@@ -41,11 +47,13 @@ def google(prompt, model, aspect, ref):
         parts.append({"inline_data": {"mime_type": mime, "data": base64.b64encode(open(ref, "rb").read()).decode()}})
     body = {"contents": [{"parts": parts}], "generationConfig": {"responseModalities": ["IMAGE"]}}
     if aspect: body["generationConfig"]["imageConfig"] = {"aspectRatio": aspect}
-    d = post_json(f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent", body, {"x-goog-api-key": k})
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    rec = Call(proj, "gemini-image", {"method": "POST", "url": url, "body": body, "ref": ref and os.path.basename(ref)})
+    d = post_json(url, body, {"x-goog-api-key": k}, rec)
     for c in d.get("candidates", []):
         for p in c.get("content", {}).get("parts", []):
             data = (p.get("inlineData") or p.get("inline_data") or {}).get("data")
-            if data: return base64.b64decode(data)
+            if data: return base64.b64decode(data), rec
     raise SystemExit(f"la respuesta no trae imagen: {json.dumps(d)[:600]}")
 
 
@@ -55,18 +63,20 @@ def openai_size(aspect):
     return "1024x1536" if h > w * 1.15 else "1536x1024" if w > h * 1.15 else "1024x1024"
 
 
-def openai_api(prompt, model, aspect, transparent, ref):
+def openai_api(prompt, model, aspect, transparent, ref, proj):
     k = local_settings.key("openai")
     if not k: raise SystemExit("Falta la API key de OpenAI (ajustes de la app)")
     if ref:   # edits endpoint takes multipart; keep stdlib-only by describing the reference instead
         prompt += f" (usa como referencia visual la imagen {os.path.basename(ref)})"
     body = {"model": model, "prompt": prompt, "size": openai_size(aspect), "n": 1}
     if transparent: body["background"] = "transparent"
-    d = post_json("https://api.openai.com/v1/images/generations", body, {"Authorization": f"Bearer {k}"})
-    return base64.b64decode(d["data"][0]["b64_json"])
+    url = "https://api.openai.com/v1/images/generations"
+    rec = Call(proj, "openai-image", {"method": "POST", "url": url, "body": body})
+    d = post_json(url, body, {"Authorization": f"Bearer {k}"}, rec)
+    return base64.b64decode(d["data"][0]["b64_json"]), rec
 
 
-def openai_subscription(prompt, aspect, transparent, ref):
+def openai_subscription(prompt, aspect, transparent, ref, proj):
     """ChatGPT subscription through the official Codex CLI (login with `codex login`): codex saves the image it generates
     under ~/.codex/generated_images; we pick the new file."""
     codex = find_cli("codex", os.environ.get("CODEX_BIN"))
@@ -79,13 +89,16 @@ def openai_subscription(prompt, aspect, transparent, ref):
     msg = (f"Usa tu herramienta de generación de imágenes para crear UNA imagen: {prompt}.{extra} "
            "No escribas código ni archivos; solo genera la imagen y responde 'listo'.")
     cmd = command(codex) + ["exec", "--skip-git-repo-check", "--ephemeral", "-s", "read-only", msg]
-    if ref: cmd[-1:-1] = ["-i", ref]
+    if ref: cmd[-1:-1] = ["-i", ref, "--"]   # -i takes a list of files: "--" ends it so the prompt stays positional
+    rec = Call(proj, "openai-codex", {"command": "codex exec", "message": msg, "ref": ref and os.path.basename(ref)})
     with tempfile.TemporaryDirectory() as tmp:
         r = subprocess.run(cmd, cwd=tmp, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=600)
     new = [p for p in glob.glob(os.path.join(root, "**", "*.*"), recursive=True) if p not in before and os.path.getmtime(p) >= t0 - 1]
+    rec.response({"stdout": r.stdout[-4000:], "stderr": r.stderr[-4000:]}, returncode=r.returncode,
+                 image=new and os.path.basename(max(new, key=os.path.getmtime)))
     if not new:
         raise SystemExit("Codex no generó ninguna imagen" + (f": {r.stderr[-500:]}" if r.returncode else " (revisa `codex login status`)"))
-    return open(max(new, key=os.path.getmtime), "rb").read()
+    return open(max(new, key=os.path.getmtime), "rb").read(), rec
 
 
 def main():
@@ -111,15 +124,16 @@ def main():
     out = os.path.join(proj, a.out) if not os.path.isabs(a.out) else a.out
     os.makedirs(os.path.dirname(out), exist_ok=True)
     if provider == "google":
-        data = google(a.prompt, model, a.aspect, ref)
+        data, rec = google(a.prompt, model, a.aspect, ref, proj)
     elif provider == "openai" and s["providers"]["openai"]["auth"] == "subscription":
-        data, model = openai_subscription(a.prompt, a.aspect, a.transparent, ref), "chatgpt (codex)"
+        (data, rec), model = openai_subscription(a.prompt, a.aspect, a.transparent, ref, proj), "chatgpt (codex)"
     elif provider == "openai":
-        data = openai_api(a.prompt, model, a.aspect, a.transparent, ref)
+        data, rec = openai_api(a.prompt, model, a.aspect, a.transparent, ref, proj)
     else:
         raise SystemExit(f"proveedor desconocido: {provider}")
     with open(out, "wb") as f:
         f.write(data)
+    rec.file(out)
     log.append({"file": os.path.relpath(out, proj), "prompt": a.prompt, "provider": provider, "model": model,
                 "aspect": a.aspect, "transparent": a.transparent, "at": time.strftime("%Y-%m-%dT%H:%M:%S")})
     json.dump(log, open(log_path, "w", encoding="utf-8"), ensure_ascii=False, indent=1)

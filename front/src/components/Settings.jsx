@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import qrcode from 'qrcode-generator'
 import { settingsApi, applyTheme } from '../api.js'
-import { Sun, Moon, Key, Mic, Image, Phone, Cpu, Check, Alert } from './Icons.jsx'
+import { Sun, Moon, Key, Mic, Image, Music, Phone, Cpu, Check, Alert } from './Icons.jsx'
 
 // All of this is saved in settings.local.json on the machine running the service (git-ignored). API keys never come back
 // to the browser: the page only knows whether a key is stored and its last 4 characters.
@@ -10,6 +10,7 @@ const PLATFORMS = [
   { id: 'google', label: 'Google (Gemini)', help: 'Imágenes y voz (TTS) con Gemini. Clave de Google AI Studio.' },
   { id: 'openai', label: 'OpenAI', help: 'Imágenes y voz. Con API key, o imágenes con tu suscripción de ChatGPT (inicio de sesión por Codex CLI).' },
   { id: 'elevenlabs', label: 'ElevenLabs', help: 'Voces (TTS) de alta calidad.' },
+  { id: 'musicful', label: 'Musicful', help: 'Música: canciones con letra o instrumentales de fondo. Clave en musicful.ai (API -> Interface key).' },
 ]
 
 function Section({ icon, title, children, note }) {
@@ -100,11 +101,11 @@ function ProviderPicker({ section, catalog, value, onSave, keys }) {
           </label>
         </>
       )}
-      {section === 'images' && value.provider !== 'none' && (
+      {(section === 'images' || section === 'music') && value.provider !== 'none' && (
         <label className="field">
           <span>Máximo por proyecto</span>
           <input type="number" min="1" max="100" defaultValue={value.max_per_project}
-            onBlur={(e) => onSave({ max_per_project: Math.max(1, Math.min(100, +e.target.value || 12)) })} />
+            onBlur={(e) => onSave({ max_per_project: Math.max(1, Math.min(100, +e.target.value || (section === 'music' ? 4 : 12))) })} />
         </label>
       )}
       {needsKey && <p className="bad-text full">Este proveedor necesita la API key de {cat.key} (arriba, en Plataformas).</p>}
@@ -193,11 +194,17 @@ export default function Settings({ settings: s, onChange }) {
         <ProviderPicker section="images" catalog={s.catalog.images} value={s.images} keys={keys} onSave={(v) => save({ images: v })} />
       </Section>
 
+      {s.music && <Section icon={<Music />} title="Música" note="Para música de fondo o canciones cuando el pedido no traiga audio. Cada generación da 2 variantes y consume créditos de Musicful.">
+        <ProviderPicker section="music" catalog={s.catalog.music} value={s.music} keys={keys} onSave={(v) => save({ music: v })} />
+      </Section>}
+
       <Section icon={<Image />} title="Herramientas en las generaciones" note="Valores por defecto al crear un video (se pueden cambiar en cada trabajo). Claude solo las usa si ayudan.">
         <Toggle checked={s.generation.images} onChange={(v) => save({ generation: { images: v } })} label="Permitir generar imágenes"
           hint={s.images.provider === 'none' ? 'Configura un proveedor de imágenes para que esté disponible' : s.catalog.images[s.images.provider]?.label} />
         <Toggle checked={s.generation.tts} onChange={(v) => save({ generation: { tts: v } })} label="Permitir generar voz"
           hint={s.tts.provider === 'none' ? 'Configura un proveedor de voz para que esté disponible' : s.catalog.tts[s.tts.provider]?.label} />
+        {s.music && <Toggle checked={s.generation.music} onChange={(v) => save({ generation: { music: v } })} label="Permitir generar música"
+          hint={s.music.provider === 'none' ? 'Configura un proveedor de música para que esté disponible' : s.catalog.music[s.music.provider]?.label} />}
       </Section>
 
       <Section icon={<Phone />} title="Acceso desde el teléfono" note="El servicio escucha en tu red local y pide un token a los demás dispositivos. Úsalo solo en redes de confianza: Claude puede ejecutar comandos en este equipo.">

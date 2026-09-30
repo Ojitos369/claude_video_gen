@@ -323,8 +323,14 @@ a { color: var(--accent); }
 .composer-side { flex: 1 1 100%; grid-template-columns: 1fr 1fr auto; }
 .composer-side .btn { grid-column: auto; min-width: 56px; }
 .composer-side .model-select.is-compact select { max-width: none; width: 100%; }
+/* attach button: next to model / effort / send on the phone, between the text and the controls on wide screens */
+.composer-attach { order: 1; width: 44px; height: 44px; border: 1px solid var(--line); }
+.composer-side { order: 2; flex: 1 1 0; }
+.composer-files { order: -1; flex: 1 1 100%; margin: 0; }
+.composer .upload-bar { order: -1; flex: 1 1 100%; margin: 0; }
 @media (min-width: 1200px) {
   .composer { flex-wrap: nowrap; }
+  .composer:has(.composer-files) { flex-wrap: wrap; }
   .composer textarea { flex: 1; }
   .composer-side { flex: none; grid-template-columns: 1fr 1fr; }
   .composer-side .btn { grid-column: 1 / -1; }

@@ -39,7 +39,7 @@ def context_prompt(job_id, tools):
     out = ["Equipo donde corre el servicio (settings.local.json -> sección machine; no leas el resto de ese archivo: tiene API keys): "
            + machine_info.summary(s.get("machine") or machine_info.ensure()[0])
            + " Ajusta resolución, procesos en paralelo y codificador a este equipo (el motor ya toma machine.video_encoder y render_jobs)."]
-    img, tts = s["images"], s["tts"]
+    img, tts, mus = s["images"], s["tts"], s["music"]
     if tools.get("images") and img["provider"] != "none":
         prov = local_settings.IMAGE_PROVIDERS.get(img["provider"], {}).get("label", img["provider"])
         if img["provider"] == "openai" and s["providers"]["openai"]["auth"] == "subscription": prov += " con la suscripción de ChatGPT"
@@ -60,6 +60,19 @@ def context_prompt(job_id, tools):
         out.append("La voz sintética está permitida, pero no hay proveedor de TTS configurado: no la uses.")
     else:
         out.append("No generes voz sintética en este trabajo.")
+    if tools.get("music") and mus["provider"] != "none":
+        prov = local_settings.MUSIC_PROVIDERS.get(mus["provider"], {}).get("label", mus["provider"])
+        out.append(f"Herramienta de música disponible ({prov}, modelo {mus['model'] or 'por defecto'}, máximo {mus['max_per_project']} generaciones por proyecto; "
+                   "cada una cuesta créditos y da 2 variantes): "
+                   f"`{py} engine/tools/gen_music.py {job_id} --style \"<género, ánimo, instrumentos, tempo; en inglés>\" --out audio/<nombre>.wav "
+                   "[--instrumental] [--lyrics-file <txt> --title \"…\"] [--gender male|female]`. Tarda unos minutos; si se agota el tiempo, vuelve a "
+                   "ejecutar el mismo comando (retoma la tarea sin pagar otra). Úsala cuando el video necesite música y no venga en los archivos "
+                   "(fondo instrumental para narraciones e historias, o una canción si el pedido la pide); escucha/revisa la duración y el ánimo "
+                   "de las variantes, elige una, y anota en PROGRESO.md qué generaste y para qué.")
+    elif tools.get("music"):
+        out.append("La generación de música está permitida, pero no hay proveedor configurado: no la uses.")
+    else:
+        out.append("No generes música con IA en este trabajo.")
     return "\n".join(out)
 
 
@@ -175,6 +188,28 @@ def resolve_aspect(value, job_dir, saved, text=""):
 
 def now():
     return datetime.now().isoformat(timespec="seconds")
+
+
+async def save_uploads(job_dir, uploads):
+    """uploads: list of (filename, async_read_chunk_fn) saved at the top of the project. An existing file is never
+    overwritten: the new one gets a -2, -3… suffix. Returns [{name, size}]."""
+    saved = []
+    for filename, reader in uploads:
+        fn = os.path.basename(filename).strip() or "archivo"
+        stem, ext = os.path.splitext(fn)
+        n = 2
+        while os.path.exists(os.path.join(job_dir, fn)) or fn in (".app", "solicitud.md", "config.json", "PROGRESO.md", "prompt.md"):
+            fn, n = f"{stem}-{n}{ext}", n + 1
+        dest = os.path.join(job_dir, fn)
+        with open(dest, "wb") as f:
+            while chunk := await reader(1 << 20):
+                f.write(chunk)
+        saved.append({"name": fn, "size": os.path.getsize(dest)})
+    return saved
+
+
+def files_text(saved):
+    return "\n".join(f"- {s['name']} ({s['size'] / 1e6:.1f} MB)" for s in saved) or "- (ninguno)"
 
 
 def trunc(s, n=MAX_TEXT):
@@ -367,14 +402,7 @@ class Runner:
             job_id, n = f"{base}-{n}", n + 1
         job = Job(job_id)
         os.makedirs(job.app, exist_ok=True)
-        saved = []
-        for filename, reader in uploads:
-            fn = os.path.basename(filename).strip() or "archivo"
-            dest = os.path.join(job.dir, fn)
-            with open(dest, "wb") as f:
-                while chunk := await reader(1 << 20):
-                    f.write(chunk)
-            saved.append({"name": fn, "size": os.path.getsize(dest)})
+        saved = await save_uploads(job.dir, uploads)
         with open(os.path.join(job.dir, "solicitud.md"), "w") as f:
             f.write(f"# Solicitud\n\n{prompt}\n\n## Archivos subidos\n" + "".join(f"- {s['name']}\n" for s in saved))
         model, effort = valid_model(model), valid_effort(effort)
@@ -387,7 +415,7 @@ class Runner:
                  cost=0.0, session_id=None, runs=[], step="En cola", error=None)
         await self.emit(job, "user", text=prompt, files=[s["name"] for s in saved], model=model, effort=effort)
         await manager.broadcast_to_group(json.dumps({"type": "job", "job": job.summary()}, ensure_ascii=False), JOBS_GROUP)
-        files_txt = "\n".join(f"- {s['name']} ({s['size'] / 1e6:.1f} MB)" for s in saved) or "- (ninguno)"
+        files_txt = files_text(saved)
         first = (f"Nuevo proyecto de video en `projects/{job_id}/`.\n\nInstrucciones del usuario:\n{prompt}\n\n"
                  f"Archivos subidos (ya están en la carpeta del proyecto):\n{files_txt}\n\n"
                  + (aspect_note or
@@ -397,17 +425,33 @@ class Runner:
         await self.enqueue(job, first, False, model, effort)
         return job
 
-    async def follow_up(self, job, text, model=None, effort=None):
+    async def follow_up(self, job, text, model=None, effort=None, uploads=()):
+        """A change request: same Claude session (--resume) when there is one. The request and its files are also written to
+        solicitud.md, so the project folder holds the whole history even for a new session."""
         m = job.meta()
         model, effort = valid_model(model or m.get("model")), valid_effort(effort or m.get("effort"))
-        job.save(model=model, effort=effort)
-        await self.emit(job, "user", text=text, files=[], model=model, effort=effort)
+        saved = await save_uploads(job.dir, uploads)
+        text = text or "Agregué archivos nuevos al proyecto: úsalos donde corresponda."
+        with open(os.path.join(job.dir, "solicitud.md"), "a") as f:
+            f.write(f"\n## Pedido de cambios · {now().replace('T', ' ')}\n\n{text}\n"
+                    + (("\nArchivos agregados:\n" + "".join(f"- {s['name']}\n" for s in saved)) if saved else ""))
+        job.save(model=model, effort=effort, files=(m.get("files") or []) + saved)
+        await self.emit(job, "user", text=text, files=[s["name"] for s in saved], model=model, effort=effort)
         await self.set_status(job, "queued", step="En cola", error=None)
+        new = f"\n\nArchivos nuevos (ya están en `projects/{job.id}/`):\n{files_text(saved)}" if saved else ""
         if m.get("session_id"):
-            await self.enqueue(job, text, True, model, effort)
-        else:   # no Claude session to resume (project adopted from the terminal): give the context explicitly
-            await self.enqueue(job, f"Proyecto existente en `projects/{job.id}/` (lee su PROGRESO.md antes de empezar).\n\n"
-                                    f"Nueva instrucción del usuario:\n{text}", False, model, effort)
+            await self.enqueue(job, f"Pedido de cambios del usuario sobre `projects/{job.id}/`:\n{text}{new}\n\n"
+                                    "Parte del estado actual del proyecto (lo que ya se hizo sigue en su carpeta); cambia solo lo necesario, "
+                                    "vuelve a renderizar lo afectado y añade a PROGRESO.md una sección con esta iteración.", True, model, effort)
+        else:   # no Claude session to resume (adopted from the terminal, or the session was lost)
+            await self.enqueue(job, self.fresh_prompt(job, text, new), False, model, effort)
+
+    def fresh_prompt(self, job, text, new=""):
+        return (f"Proyecto existente en `projects/{job.id}/`; esta es una sesión nueva, así que primero ponte en contexto: lee "
+                f"`solicitud.md` (todos los pedidos del usuario en orden, con sus archivos), `prompt.md`, `PROGRESO.md` (lo hecho, "
+                f"supuestos y pendientes), `config.json` y la lista de archivos del proyecto.\n\n"
+                f"Nuevo pedido de cambios del usuario:\n{text}{new}\n\n"
+                "Cambia solo lo necesario, vuelve a renderizar lo afectado y añade a PROGRESO.md una sección con esta iteración.")
 
     async def rename(self, job, name):
         name = " ".join((name or "").split())[:120]
@@ -442,7 +486,8 @@ class Runner:
             detach = {"creationflags": 0x00000200 | 0x08000000} if WIN else {"start_new_session": True}   # new group, no console
             proc = await asyncio.create_subprocess_exec(*cmd, cwd=WORKSPACE_DIR, stdin=asyncio.subprocess.DEVNULL,
                                                         stdout=out, stderr=err, env=env, **detach)
-        run = {"started": now(), "prompt": trunc(prompt, 500), "status": "running", "model": model, "effort": effort}
+        run = {"started": now(), "prompt": trunc(prompt, 500), "status": "running", "model": model, "effort": effort,
+               "resume": bool(resume and m.get("session_id")), "text": prompt}
         job.save(pending=None, proc={"pid": proc.pid, "stream": stream, "err": errlog, "offset": 0, "run": run, "result": None})
         self.procs[job.id] = proc
         await self.follow(job, proc)
@@ -507,6 +552,13 @@ class Runner:
                 with open(p["err"], errors="replace") as fe: err = fe.read().strip()
             except OSError:
                 pass
+            if run.get("resume") and result is None and "No conversation found" in err:
+                # the Claude session is gone (e.g. cleaned history): continue in a new session with the project's own history
+                await self.emit(job, "system", text="No se pudo retomar la sesión de Claude: se abre una nueva con el historial del proyecto")
+                job.save(session_id=None)
+                await self.set_status(job, "queued", step="En cola", error=None)
+                await self.enqueue(job, self.fresh_prompt(job, run.get("text") or ""), False, run["model"], run["effort"])
+                return
             msg = (result or {}).get("result") or err[-1500:] or (f"claude terminó con código {code}" if proc else "claude terminó sin resultado")
             await self.emit(job, "error", text=trunc(msg, 2000))
             await self.set_status(job, "error", step="Error", error=trunc(msg, 300))

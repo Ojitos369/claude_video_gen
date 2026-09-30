@@ -54,11 +54,11 @@ servidor solo escucha en 127.0.0.1), `WORKSPACE_DIR`.
   Progreso, Archivos); en escritorio, en columnas. Tema oscuro (por defecto) o claro.
 - **Ajustes** (se guardan en `settings.local.json`, fuera de git; las claves no se muestran completas): tema; API keys de Anthropic
   (opcional, para facturar a la API en vez de la sesión de Claude Code), Google, OpenAI (API key o suscripción de ChatGPT vía Codex CLI)
-  y ElevenLabs, con botón "Probar"; voz (Edge TTS gratis, Piper y Kokoro de código abierto locales, Google Gemini TTS
-  `gemini-3.8-flash-tts`, OpenAI, ElevenLabs); imágenes (Google Gemini, OpenAI); herramientas permitidas por defecto; acceso desde el
+  ElevenLabs y Musicful, con botón "Probar"; voz (Edge TTS gratis, Piper y Kokoro de código abierto locales, Google Gemini TTS
+  `gemini-3.8-flash-tts`, OpenAI, ElevenLabs); imágenes (Google Gemini, OpenAI); música (Musicful); herramientas permitidas por defecto; acceso desde el
   teléfono (QR); datos del equipo.
 - **Nuevo video**: arrastra archivos (audio, video, imágenes, guiones, referencias), escribe qué quieres y elige formato y modelo.
-  y qué herramientas puede usar Claude (generar imágenes / voz). Los archivos se guardan en `projects/<id>/` con `solicitud.md` y un
+  y qué herramientas puede usar Claude (generar imágenes / voz / música). Los archivos se guardan en `projects/<id>/` con `solicitud.md` y un
   `config.json` inicial; Claude recibe los datos del equipo y las herramientas disponibles (nunca las claves); el trabajo entra a una cola
   (uno a la vez, comparten la GPU).
 - **Formato**: 9:16 por defecto; al subir un video cambia solo a "del video" (se puede cambiar a mano). Opciones: del video,
@@ -71,13 +71,15 @@ servidor solo escucha en 127.0.0.1), `WORKSPACE_DIR`.
 - **Proceso en vivo**: paso actual con tiempo, línea de tiempo de cada acción de Claude (comando, lectura, edición, búsqueda; se abre
   para ver entrada y salida), sus mensajes, costo y duración, `PROGRESO.md` y los archivos de `out/` en cuanto aparecen.
 - **Resultado**: reproductor (prefiere el video final sobre las vistas previas), descargas y archivos del proyecto.
-- **Cambios**: el cuadro de abajo continúa la misma sesión de Claude (`--resume`). Se puede cancelar o borrar un trabajo.
+- **Cambios**: el cuadro de abajo continúa la misma sesión de Claude (`--resume`) y acepta archivos nuevos (clip o arrastrar al
+  panel); se guardan en la carpeta del proyecto sin pisar los existentes (`nombre-2.ext`) y cada pedido se añade a `solicitud.md`.
+  Si la sesión ya no se puede retomar, se abre una nueva que primero lee `solicitud.md`, `prompt.md` y `PROGRESO.md`. Se puede cancelar o borrar un trabajo.
 - **Renombrar**: lápiz junto al título. Cambia el nombre visible; la carpeta `projects/<id>/` no cambia (la sesión de Claude usa esa ruta).
 - Claude corre desacoplado del servidor (su salida va a `projects/<id>/.app/run-N.jsonl`): reiniciar el servidor no corta un
   trabajo, se retoma al arrancar. Los proyectos creados desde la terminal aparecen en la lista y también se pueden continuar.
 
 API: `GET /api/jobs/list`, `POST /api/jobs/create` (multipart: `prompt`, `name`, `model`, `effort`, `aspect`, `aspect_text`, `tools`, `files[]`),
-`GET /api/jobs/detail/<id>`, `GET /api/jobs/events/<id>?since=N`, `POST /api/jobs/message/<id>` (`text`, `model`, `effort`),
+`GET /api/jobs/detail/<id>`, `GET /api/jobs/events/<id>?since=N`, `POST /api/jobs/message/<id>` (JSON `text`, `model`, `effort`, o multipart con los mismos campos + `files[]`),
 `POST /api/jobs/rename/<id>` (`name`), `POST /api/jobs/cancel/<id>`, `POST /api/jobs/delete/<id>`, `GET /api/jobs/file/<id>/<ruta>`, `GET /api/base/status`,
 `GET /api/settings/get`, `POST /api/settings/save`, `POST /api/settings/test/<plataforma>`, `POST /api/settings/codex_login`,
 `POST /api/settings/machine`, websockets `/api/ws/jobs/<id>` (eventos de un trabajo) y `/api/ws/jobs/all` (estado de todos).
@@ -104,7 +106,7 @@ engine/
   scenes/              motivos 2D reutilizables (base.py = helpers y sprites, basic.py = motivos v1)
   voxel/               vóxeles 3D: vox.py (generador + horneado), structures.py (steampunk), gl.py (OpenGL), show.py, build.py
   tools/               local_settings.py (settings.local.json), machine.py (detección del equipo), binaries.py (claude/codex),
-                       gen_image.py (imágenes), tts.py (voz)
+                       gen_image.py (imágenes), tts.py (voz), gen_music.py (música)
   templates/prompt.md  plantilla de instrucciones por video
 projects/<id>/
   prompt.md / solicitud.md   pedido de ESTE video
@@ -165,6 +167,13 @@ python engine/beats.py mi_expl                      # solo para cortes suaves
 ```bash
 python engine/tools/gen_image.py mi_video "prompt detallado" --out assets/fondo.png --aspect 9:16 [--transparent] [--ref img.png]
 python engine/tools/tts.py mi_video --file guion.txt --out audio/narracion.wav [--voice es-MX-JorgeNeural] [--rate -5%]
+python engine/tools/gen_music.py mi_video --style "calm lofi, piano, 80 bpm" --out audio/music.wav --instrumental   # Musicful
+python engine/tools/synth_music.py mi_video --seconds 40 --bpm 120 --out audio/music.wav [--breakdown 16 21]   # fondo instrumental local (sin servicio)
+python engine/clipedit.py mi_video [--frame 1.5 | --preview 4 9]   # edición de clips + voz + música + efectos (edit.json, captions.json)
+python engine/tools/gen_music.py mi_video --style "upbeat pop" --lyrics-file letra.txt --title "Mi canción" --out audio/song.wav
+python engine/tools/gen_music.py --info                                                  # canciones restantes de la clave
+# cada llamada a un servicio externo queda en projects/<id>/assets/<servicio>/{consulta_N.json, respuesta_N.json, N_<archivo>}
+#   servicios: gemini-tts, openai-tts, elevenlabs-tts, edge-tts, gemini-image, openai-image, openai-codex, musicful (sin claves)
 python engine/tools/machine.py [--force]      # datos del equipo guardados en settings.local.json
 ```
 

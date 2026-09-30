@@ -10,17 +10,21 @@ export const api = {
   jobs: () => fetch('/api/jobs/list').then(json).then((d) => d.jobs),
   job: (id) => fetch(`/api/jobs/detail/${id}`).then(json).then((d) => d.job),
   events: (id, since = 0) => fetch(`/api/jobs/events/${id}?since=${since}`).then(json).then((d) => d.events),
-  message: (id, text, model, effort) =>
-    fetch(`/api/jobs/message/${id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, model, effort }) }).then(json),
+  message: (id, { text, model, effort, files = [] }, onProgress) => {
+    const fd = new FormData()
+    fd.append('text', text || '')
+    if (model) fd.append('model', model)
+    if (effort) fd.append('effort', effort)
+    files.forEach((f) => fd.append('files', f, f.name))
+    return upload(`/api/jobs/message/${id}`, fd, onProgress)
+  },
   rename: (id, name) =>
     fetch(`/api/jobs/rename/${id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) }).then(json),
   cancel: (id) => fetch(`/api/jobs/cancel/${id}`, { method: 'POST' }).then(json),
   remove: (id) => fetch(`/api/jobs/delete/${id}`, { method: 'POST' }).then(json),
   fileUrl: (id, path) => `/api/jobs/file/${id}/${path.split('/').map(encodeURIComponent).join('/')}`,
 
-  // multipart upload with progress (fetch has no upload progress)
-  create: ({ prompt, name, model, effort, aspect, aspectText, tools, files }, onProgress) =>
-    new Promise((resolve, reject) => {
+  create: ({ prompt, name, model, effort, aspect, aspectText, tools, files }, onProgress) => {
       const fd = new FormData()
       fd.append('prompt', prompt)
       fd.append('name', name || '')
@@ -30,18 +34,23 @@ export const api = {
       if (aspect === 'manual') fd.append('aspect_text', aspectText || '')
       if (tools) fd.append('tools', JSON.stringify(tools))
       files.forEach((f) => fd.append('files', f, f.name))
-      const xhr = new XMLHttpRequest()
-      xhr.open('POST', '/api/jobs/create')
-      xhr.upload.onprogress = (e) => e.lengthComputable && onProgress?.(e.loaded / e.total)
-      xhr.onload = () => {
-        let data = {}
-        try { data = JSON.parse(xhr.responseText) } catch { /* empty */ }
-        xhr.status < 300 ? resolve(data.job) : reject(new Error(data.detail || `Error ${xhr.status}`))
-      }
-      xhr.onerror = () => reject(new Error('No se pudo conectar con el servidor'))
-      xhr.send(fd)
-    }),
+      return upload('/api/jobs/create', fd, onProgress)
+  },
 }
+
+// multipart upload with progress (fetch has no upload progress); resolves with the job of the answer
+const upload = (url, fd, onProgress) => new Promise((resolve, reject) => {
+  const xhr = new XMLHttpRequest()
+  xhr.open('POST', url)
+  xhr.upload.onprogress = (e) => e.lengthComputable && onProgress?.(e.loaded / e.total)
+  xhr.onload = () => {
+    let data = {}
+    try { data = JSON.parse(xhr.responseText) } catch { /* empty */ }
+    xhr.status < 300 ? resolve(data.job) : reject(new Error(data.detail || `Error ${xhr.status}`))
+  }
+  xhr.onerror = () => reject(new Error('No se pudo conectar con el servidor'))
+  xhr.send(fd)
+})
 
 export const settingsApi = {
   get: () => fetch('/api/settings/get').then(json).then((d) => d.settings),

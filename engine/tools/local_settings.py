@@ -16,10 +16,12 @@ DEFAULTS = {
         "google": {"api_key": ""},
         "openai": {"auth": "api", "api_key": ""},             # auth: api | subscription (ChatGPT login through Codex CLI)
         "elevenlabs": {"api_key": ""},
+        "musicful": {"api_key": ""},
     },
     "tts": {"provider": "none", "model": "", "voice": "", "language": "es"},
     "images": {"provider": "none", "model": "", "max_per_project": 12},
-    "generation": {"images": True, "tts": False},     # tools offered to Claude by default in new jobs
+    "music": {"provider": "none", "model": "", "max_per_project": 4},
+    "generation": {"images": True, "tts": False, "music": False},     # tools offered to Claude by default in new jobs
 }
 
 # catalogue shown in the app (free text is also accepted for models)
@@ -36,6 +38,10 @@ IMAGE_PROVIDERS = {
     "none": {"label": "Ninguno", "models": []},
     "google": {"label": "Google Gemini (imagen)", "key": "google", "models": ["gemini-2.5-flash-image", "gemini-3-pro-image-preview"]},
     "openai": {"label": "OpenAI (API o suscripción ChatGPT)", "key": "openai", "models": ["gpt-image-1", "gpt-image-1-mini"]},
+}
+MUSIC_PROVIDERS = {
+    "none": {"label": "Ninguno", "models": []},
+    "musicful": {"label": "Musicful (canciones e instrumentales)", "key": "musicful", "models": ["MFV2.0", "MFV3.0", "MFV1.5X", "MFV1.5", "MFV1.0"]},
 }
 SECRET_FIELDS = ("api_key", "token")
 
@@ -91,7 +97,9 @@ def update(patch):
         elif not p.get("api_key"): p.pop("api_key", None)
         p.pop("api_key_set", None); p.pop("api_key_hint", None)
         s["providers"][name].update({k: v for k, v in p.items() if k in DEFAULTS["providers"][name]})
-    for sec in ("tts", "images", "generation"):
+    if (patch.get("providers") or {}).get("musicful", {}).get("api_key") and s["music"]["provider"] == "none":
+        s["music"]["provider"] = "musicful"   # only music provider: saving its key is enough to enable it
+    for sec in ("tts", "images", "music", "generation"):
         if isinstance(patch.get(sec), dict):
             s[sec].update({k: v for k, v in patch[sec].items() if k in DEFAULTS[sec]})
     if patch.get("theme") in ("dark", "light"):

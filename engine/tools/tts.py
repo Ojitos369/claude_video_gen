@@ -4,7 +4,8 @@
 # Open source (local, free): piper, kokoro — installed into the engine venv and their voices downloaded on first use.
 # Free online, no key: edge (Microsoft Edge neural voices).
 # Services (API key in the app settings): google (Gemini TTS, e.g. gemini-3.8-flash-tts), openai, elevenlabs.
-# Output: WAV (mono). Logged in projects/<id>/audio/tts.json.
+# Output: WAV (mono). Logged in projects/<id>/audio/tts.json. Online services also keep each request / answer / audio in
+# projects/<id>/assets/{edge-tts,gemini-tts,openai-tts,elevenlabs-tts}/ (engine/tools/apilog.py).
 import argparse
 import base64
 import json
@@ -18,6 +19,7 @@ import wave
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from engine.tools import local_settings  # noqa: E402
+from engine.tools.apilog import Call  # noqa: E402
 
 CACHE = os.path.join(os.path.expanduser("~"), ".cache", "video-studio", "tts")
 DEFAULTS = {"edge": ("edge-tts", "es-MX-JorgeNeural"), "piper": ("es_MX-claude-high", ""), "kokoro": ("kokoro-v1.0", "ef_dora"), "google": ("gemini-3.8-flash-tts", "Kore"),
@@ -29,13 +31,18 @@ def write_pcm(path, pcm, rate):
         w.setnchannels(1); w.setsampwidth(2); w.setframerate(rate); w.writeframes(pcm)
 
 
-def request(url, body, headers, timeout=600):
+def request(url, body, headers, rec, timeout=600):
     req = urllib.request.Request(url, data=json.dumps(body).encode(), headers={"Content-Type": "application/json", **headers})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
-            return r.read()
+            data = r.read()
+            try: rec.response(json.loads(data), status=r.status)
+            except ValueError: rec.response(data, status=r.status, content_type=r.headers.get("Content-Type"))
+            return data
     except urllib.error.HTTPError as e:
-        raise SystemExit(f"error {e.code} de la API: {e.read().decode(errors='replace')[:800]}")
+        err = e.read().decode(errors="replace")
+        rec.response(err, status=e.code)
+        raise SystemExit(f"error {e.code} de la API: {err[:800]}")
 
 
 def download(url, dest):
@@ -80,47 +87,61 @@ def kokoro(text, model, voice, out, lang):
     write_pcm(out, (np.clip(samples, -1, 1) * 32767).astype("<i2").tobytes(), sr)
 
 
-def edge(text, voice, out, rate):
+def edge(text, voice, out, rate, proj):
     """Microsoft Edge neural voices (free, no key, online) -> mp3 -> wav with ffmpeg."""
     ensure_pkg("edge_tts", "edge-tts")
     import asyncio, shutil, edge_tts
     mp3 = out + ".mp3"
-    asyncio.run(edge_tts.Communicate(text, voice, rate=rate or "+0%").save(mp3))
+    rec = Call(proj, "edge-tts", {"service": "edge-tts", "body": {"text": text, "voice": voice, "rate": rate or "+0%"}})
+    try:
+        asyncio.run(edge_tts.Communicate(text, voice, rate=rate or "+0%").save(mp3))
+    except Exception as e:
+        rec.response(str(e), error=type(e).__name__); raise
+    rec.response({"bytes": os.path.getsize(mp3)}, format="mp3")
+    rec.file(mp3, os.path.splitext(os.path.basename(out))[0] + ".mp3")
     subprocess.run([shutil.which("ffmpeg") or "ffmpeg", "-y", "-loglevel", "error", "-i", mp3, "-ac", "1", "-ar", "24000", out], check=True)
     os.remove(mp3)
+    return rec
 
 
-def google(text, model, voice, out):
+def google(text, model, voice, out, proj):
     k = local_settings.key("google")
     if not k: raise SystemExit("Falta la API key de Google (ajustes de la app)")
     body = {"contents": [{"parts": [{"text": text}]}],
             "generationConfig": {"responseModalities": ["AUDIO"],
                                  "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voice}}}}}
-    d = json.loads(request(f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent", body, {"x-goog-api-key": k}))
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    rec = Call(proj, "gemini-tts", {"method": "POST", "url": url, "body": body})
+    d = json.loads(request(url, body, {"x-goog-api-key": k}, rec))
     for c in d.get("candidates", []):
         for p in c.get("content", {}).get("parts", []):
             inl = p.get("inlineData") or p.get("inline_data") or {}
             if inl.get("data"):
                 mime = inl.get("mimeType", "")
                 rate = int(mime.split("rate=")[1].split(";")[0]) if "rate=" in mime else 24000
-                write_pcm(out, base64.b64decode(inl["data"]), rate); return
+                write_pcm(out, base64.b64decode(inl["data"]), rate); return rec
     raise SystemExit(f"la respuesta no trae audio: {json.dumps(d)[:600]}")
 
 
-def openai(text, model, voice, out, instructions):
+def openai(text, model, voice, out, instructions, proj):
     k = local_settings.key("openai")
     if not k: raise SystemExit("Falta la API key de OpenAI (ajustes de la app; el TTS no se puede usar con la suscripción)")
     body = {"model": model, "voice": voice, "input": text, "response_format": "wav"}
     if instructions: body["instructions"] = instructions
+    url = "https://api.openai.com/v1/audio/speech"
+    rec = Call(proj, "openai-tts", {"method": "POST", "url": url, "body": body})
     with open(out, "wb") as f:
-        f.write(request("https://api.openai.com/v1/audio/speech", body, {"Authorization": f"Bearer {k}"}))
+        f.write(request(url, body, {"Authorization": f"Bearer {k}"}, rec))
+    return rec
 
 
-def elevenlabs(text, model, voice, out):
+def elevenlabs(text, model, voice, out, proj):
     k = local_settings.key("elevenlabs")
     if not k: raise SystemExit("Falta la API key de ElevenLabs (ajustes de la app)")
-    pcm = request(f"https://api.elevenlabs.io/v1/text-to-speech/{voice}?output_format=pcm_24000", {"text": text, "model_id": model}, {"xi-api-key": k})
-    write_pcm(out, pcm, 24000)
+    url, body = f"https://api.elevenlabs.io/v1/text-to-speech/{voice}?output_format=pcm_24000", {"text": text, "model_id": model}
+    rec = Call(proj, "elevenlabs-tts", {"method": "POST", "url": url, "body": body})
+    write_pcm(out, request(url, body, {"xi-api-key": k}, rec), 24000)
+    return rec
 
 
 def main():
@@ -139,17 +160,21 @@ def main():
     provider = a.provider or s["provider"]
     if provider in (None, "", "none"): raise SystemExit("El TTS no está configurado (ajustes de la app -> Voz)")
     dm, dv = DEFAULTS.get(provider, ("", ""))
-    model, voice, lang = a.model or s.get("model") or dm, a.voice or s.get("voice") or dv, a.lang or s.get("language") or "es"
+    same = provider == s["provider"]   # the saved model / voice belong to the configured provider only
+    model, voice = a.model or (same and s.get("model")) or dm, a.voice or (same and s.get("voice")) or dv
+    lang = a.lang or s.get("language") or "es"
     out = os.path.join(proj, a.out) if not os.path.isabs(a.out) else a.out
     os.makedirs(os.path.dirname(out), exist_ok=True)
     t0 = time.time()
-    if provider == "edge": edge(text, voice, out, a.rate)
+    rec = None   # service record (online providers only)
+    if provider == "edge": rec = edge(text, voice, out, a.rate, proj)
     elif provider == "piper": piper(text, model, voice, out)
     elif provider == "kokoro": kokoro(text, model, voice, out, lang)
-    elif provider == "google": google(text, model, voice, out)
-    elif provider == "openai": openai(text, model, voice, out, a.instructions)
-    elif provider == "elevenlabs": elevenlabs(text, model, voice, out)
+    elif provider == "google": rec = google(text, model, voice, out, proj)
+    elif provider == "openai": rec = openai(text, model, voice, out, a.instructions, proj)
+    elif provider == "elevenlabs": rec = elevenlabs(text, model, voice, out, proj)
     else: raise SystemExit(f"proveedor desconocido: {provider}")
+    if rec and provider != "edge": rec.file(out)   # edge keeps its original mp3
     with wave.open(out) as w:
         dur = w.getnframes() / w.getframerate()
     log_path = os.path.join(proj, "audio", "tts.json")

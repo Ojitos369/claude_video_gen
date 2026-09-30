@@ -51,14 +51,24 @@ class JobEvents(AsyncApi):
 
 
 class JobMessage(AsyncApi):
+    """Change request: JSON {text, model, effort} or multipart with the same fields plus files[] to add to the project."""
+    async def get_post_data(self):
+        if "multipart/form-data" not in self.request.headers.get("content-type", ""):
+            await super().get_post_data()
+
     async def main(self):
         job = get_job(self.data["job_id"])
+        uploads = []
+        if "multipart/form-data" in self.request.headers.get("content-type", ""):
+            form = await self.request.form()
+            self.data.update({k: form.get(k) for k in ("text", "model", "effort") if form.get(k) is not None})
+            uploads = [(f.filename, f.read) for f in form.getlist("files") if getattr(f, "filename", None)]
         text = (self.data.get("text") or "").strip()
-        if not text:
+        if not text and not uploads:
             raise MYE("Mensaje vacío")
         if job.meta().get("status") in ("running", "queued"):
             raise MYE("El trabajo sigue en proceso; espera a que termine o cancélalo")
-        await runner.follow_up(job, text, self.data.get("model"), self.data.get("effort"))
+        await runner.follow_up(job, text, self.data.get("model"), self.data.get("effort"), uploads)
         self.response = {"job": job.summary()}
 
 

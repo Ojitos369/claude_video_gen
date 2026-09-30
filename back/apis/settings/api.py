@@ -51,7 +51,7 @@ class GetSettings(AsyncApi):
         token = local_settings.load()["access"]["token"]
         s["access"]["token"] = token if self.request.client.host in ("127.0.0.1", "::1", "localhost") else ""
         s["access"]["lan_url"] = f"http://{lan_ip()}:{port}/?token={token}" if s["access"]["token"] else ""
-        s["catalog"] = {"tts": local_settings.TTS_PROVIDERS, "images": local_settings.IMAGE_PROVIDERS}
+        s["catalog"] = {"tts": local_settings.TTS_PROVIDERS, "images": local_settings.IMAGE_PROVIDERS, "music": local_settings.MUSIC_PROVIDERS}
         s["machine_summary"] = machine.summary(s.get("machine")) if s.get("machine") else ""
         s["codex"] = await run_in_threadpool(codex_status)
         self.response = {"settings": s}
@@ -59,7 +59,7 @@ class GetSettings(AsyncApi):
 
 class SaveSettings(AsyncApi):
     async def main(self):
-        patch = {k: v for k, v in self.data.items() if k in ("theme", "providers", "tts", "images", "generation", "access")}
+        patch = {k: v for k, v in self.data.items() if k in ("theme", "providers", "tts", "images", "music", "generation", "access")}
         local_settings.update(patch)
         self.response = {"ok": True}
 
@@ -79,6 +79,7 @@ class TestProvider(AsyncApi):
             "openai": ("https://api.openai.com/v1/models", {"Authorization": f"Bearer {k}"}),
             "anthropic": ("https://api.anthropic.com/v1/models", {"x-api-key": k, "anthropic-version": "2023-06-01"}),
             "elevenlabs": ("https://api.elevenlabs.io/v1/user", {"xi-api-key": k}),
+            "musicful": ("https://api.musicful.ai/v1/get_api_key_info", {"x-api-key": k}),
         }
         if name not in checks:
             raise MYE("Plataforma desconocida")
