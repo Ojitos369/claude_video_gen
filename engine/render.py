@@ -74,8 +74,9 @@ def build_cuts():
             nxt = t + b.get("cut_every", 2.0)
             d = snap(nxt, downs)
             nxt = d if abs(d - nxt) <= 0.45 else snap(nxt, beats)
-            if nxt <= t + 1.0: nxt = t + 2.0     # past the last beat: keep advancing
-            if nxt > end - 1.0: break
+            ce = b.get("cut_every", 2.0); mn = min(1.0, ce * 0.5)
+            if nxt <= t + mn: nxt = t + max(ce, 2.0 if ce >= 2.0 else mn * 2)     # past the last beat: keep advancing
+            if nxt > end - mn: break
             t, v = nxt, v + 1
     return cuts
 CUTS = [] if VIDEO_BG or VOX_BG else build_cuts()
@@ -102,6 +103,53 @@ def pause_amount(t):
             return u * u * (3 - 2 * u)
     return 0.0
 
+TRANS = CFG.get("transitions")
+TR_DUR = 0.3
+def _zoom(a, z):
+    """Zoom a float image about its centre (z > 1 enlarges)."""
+    im = Image.fromarray(np.clip(a, 0, 255).astype(np.uint8)); w, h = BW / z, BH / z
+    return np.asarray(im.resize((BW, BH), Image.BILINEAR, box=((BW - w) / 2, (BH - h) / 2, (BW + w) / 2, (BH + h) / 2)), np.float32)
+
+def transition(kind, a, b, u, ci):
+    """Blend the previous scene a into the new one b, u = 0..1 over TR_DUR. Each style is an attention-grabbing pattern interrupt."""
+    e = 1 - (1 - u) ** 3
+    if kind == "flash":
+        k = min(1.0, u * 4)
+        return (a * (1 - k) + b * k) + (255 - b) * 0.85 * (1 - u) ** 2
+    if kind == "glitch":
+        out = (a if u < 0.3 else b).copy()
+        sh = int(36 * (1 - u))
+        out[..., 0] = np.roll(out[..., 0], sh, 1); out[..., 2] = np.roll(out[..., 2], -sh, 1)
+        r = np.random.default_rng(ci * 31 + int(u * 8))
+        for _ in range(7):
+            y0 = int(r.integers(0, BH - 40)); hh = int(r.integers(8, 50)); dx = int(r.integers(-60, 60) * (1 - u))
+            out[y0:y0 + hh] = np.roll(out[y0:y0 + hh], dx, 1)
+        return out
+    if kind == "slide":
+        off = int(BW * e)
+        if ci % 2: return np.concatenate([a, b], 1)[:, off:off + BW]
+        return np.concatenate([b, a], 1)[:, BW - off:2 * BW - off]
+    if kind == "zoom":
+        k = min(1.0, u * 2.2)
+        return _zoom(a, 1 + 1.4 * e) * (1 - k) + _zoom(b, 1 + 0.5 * (1 - e)) * k
+    if kind == "iris":
+        yy, xx = np.ogrid[0:BH, 0:BW]
+        rad = e * math.hypot(BW, BH) / 2 * 1.05
+        m = ((xx - BW / 2) ** 2 + (yy - BH / 2) ** 2 <= rad * rad)[..., None]
+        ring = (np.abs(np.sqrt((xx - BW / 2) ** 2 + (yy - BH / 2) ** 2) - rad) < 7)[..., None] * 255
+        return np.where(m, b, a) + ring * (1 - u)
+    if kind == "whip":
+        n, sh = 7, int(110 * (1 - abs(2 * u - 1)) + 4)
+        src = a if u < 0.5 else b
+        return sum(np.roll(src, int(sh * (i / n - 0.5)) * (1 if ci % 2 else -1), 1) for i in range(n)) / n
+    if kind == "bars":
+        k = int(BW / 9)
+        idx = (np.arange(BW) // k) % 2
+        prog = np.where(idx == 0, e, np.clip(e * 1.6 - 0.3, 0, 1))
+        cols = (np.arange(BW) % k) / k < prog
+        return np.where(cols[None, :, None], b, a)
+    return a * (1 - u) + b * u
+
 def background(t):
     ci = max(0, int(np.searchsorted(CUT_T, t, side="right") - 1))
     cut = CUTS[ci]
@@ -112,10 +160,15 @@ def background(t):
     if cut["hard"]:
         zoom_punch = 0.14 * math.exp(-lt / 0.25)
         img = img + (255 - img) * (0.6 * math.exp(-lt / 0.12))            # flash
-    elif ci > 0 and lt < 0.2:
+    elif ci > 0 and TRANS and lt < TR_DUR:
+        img = transition(TRANS[ci % len(TRANS)], draw_cut(ci - 1, t), img, lt / TR_DUR, ci)
+    elif ci > 0 and not TRANS and lt < 0.2:
         k = lt / 0.2
         img = draw_cut(ci - 1, t) * (1 - k) + img * k                         # soft cross-dissolve
     img = img * VIG
+    if CFG["beat_fx"]:
+        sh = int(round(3 * pulse(t) ** 1.5))
+        if sh: img = img.copy(); img[..., 0] = np.roll(img[..., 0], sh, 1); img[..., 2] = np.roll(img[..., 2], -sh, 1)
     fo = CFG["fade_out"]
     if fo and t > DUR - fo - 0.25:
         img = img * max(0.0, 1 - (t - (DUR - fo - 0.25)) / fo)
@@ -279,12 +332,21 @@ def frame(fi, bg=None):
         layer = g.render(t, kind)
         sc = 1 + ((0.045 if kind == "chorus" else 0.015) * p if CFG["text_pulse"] else 0)
         if since < 0.25: sc *= 0.94 + 0.06 * (1 - (1 - max(0, since) / 0.25) ** 3)   # ease-in pop
+        dx = dy = 0.0; ang = 0.0
+        if CFG["text_anim"] == "dynamic":
+            u = max(0.0, min(1.0, since / 0.24)); e3 = 1 - (1 - u) ** 3; st = i % 4
+            if st == 0: sc *= 1 + 0.7 * (1 - e3)
+            elif st == 1: dy = 150 * S * (1 - e3)
+            elif st == 2: ang = 14 * (1 - e3); sc *= 0.7 + 0.3 * e3
+            else: dy = -150 * S * (1 - e3); sc *= 1.15 - 0.15 * e3
+            if t > LINES[i]["end"]: sc *= 1 + 0.35 * min(1.0, (t - LINES[i]["end"]) / 0.15)
         if abs(sc - 1) > 0.002:
             layer = layer.resize((int(g.w * sc), int(g.h * sc)), Image.BILINEAR)
+        if ang: layer = layer.rotate(ang * (1 if i % 8 < 4 else -1), expand=True, resample=Image.BILINEAR)
         if a < 1:
             al = np.asarray(layer).copy(); al[..., 3] = (al[..., 3] * a).astype(np.uint8); layer = Image.fromarray(al)
         cy = H * 0.8 if CFG["caption_position"] == "bottom" else H / 2
-        img.alpha_composite(layer, ((W - layer.width) // 2, int(cy - layer.height / 2)))
+        img.alpha_composite(layer, (int((W - layer.width) // 2 + dx), int(cy - layer.height / 2 + dy)))
     return img.convert("RGB")
 
 # ---------------------------------------------------------------- encode

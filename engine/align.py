@@ -1,6 +1,7 @@
 # Forced alignment (torchaudio MMS_FA) of lyrics/lyrics_src.json -> lyrics/lyrics.json (+ .srt)
 #   python engine/align.py <project>
 # lyrics_src.json: {"language": "ko", "script": "Hangul", "lines": [{"win": [a, b], "text": ..., "rom": ..., "es": ...}]}
+#   a " | " in text splits one alignment into several display lines (words stay aligned together)
 #   win  = time window (s) where the line is sung (rough, from the transcripts)
 #   text = original line; rom = romanization (required for non-Latin scripts, same word count as text); es = Spanish translation
 # Edit lyrics_src.json and re-run to fix timing without re-transcribing.
@@ -18,7 +19,7 @@ wav = torchaudio.functional.resample(wav.mean(0, keepdim=True), sr, bundle.sampl
 
 def norm(w):
     w = unicodedata.normalize("NFKD", w.lower())
-    return "".join(c for c in w if c in dic)
+    return "".join(c for c in w if c in dic and dic[c] != 0)   # "-" is the blank token
 
 # vocal activity (10 ms frames) used to trim word edges to where the voice actually sounds
 import numpy as np
@@ -33,8 +34,11 @@ def trim(s, e):
 out = []
 for L in src:
     a, b = L["win"]
-    disp = L["text"].split()
-    align_words = (L.get("rom") or L["text"]).split()
+    # a " | " inside text splits the aligned line into several display lines (one alignment pass, e.g. fast passages)
+    disp_all = L["text"].split()
+    brk = [i - k for k, i in enumerate(i for i, w in enumerate(disp_all) if w == "|")]
+    disp = [w for w in disp_all if w != "|"]
+    align_words = [w for w in (L.get("rom") or L["text"]).split() if w != "|"]
     assert len(disp) == len(align_words), L
     toks = [norm(w) or "a" for w in align_words]   # punctuation-only words get a dummy token
     seg = wav[:, int(a*sr):int(b*sr)].to(dev)
@@ -50,15 +54,18 @@ for L in src:
         ws, we = trim(a + sp[0].start*ratio, a + sp[-1].end*ratio)
         words.append({"w": d, "s": round(ws, 3), "e": round(we, 3),
                       "score": round(sum(s.score for s in sp)/len(sp), 2)})
-    out.append({"start": words[0]["s"], "end": words[-1]["e"], "text": L["text"], "rom": L.get("rom", ""),
-                "es": L["es"], "words": words})
+    cuts = [0] + brk + [len(words)]
+    for a_, b_ in zip(cuts, cuts[1:]):
+        ws_ = words[a_:b_]
+        out.append({"start": ws_[0]["s"], "end": ws_[-1]["e"], "text": " ".join(w["w"] for w in ws_), "rom": L.get("rom", "") if not brk else "",
+                    "es": L.get("es", ""), "words": ws_})
     print(f'{words[0]["s"]:7.2f} {words[-1]["e"]:7.2f}  ' + " ".join(f'{w["w"]}({w["score"]})' for w in words))
 
 json.dump({"language": SRC["language"], "script": SRC.get("script", ""), "lines": out}, open(pr.p("lyrics", "lyrics.json"), "w"), ensure_ascii=False, indent=1)
 f = lambda t: f"{int(t//3600):02d}:{int(t%3600//60):02d}:{int(t%60):02d},{int(t*1000%1000):03d}"
 with open(pr.p("lyrics", "lyrics.srt"), "w") as fh:
     for n, L in enumerate(out, 1):
-        fh.write(f'{n}\n{f(L["start"])} --> {f(L["end"])}\n{L["text"]}\n' + (f'{L["rom"]}\n' if L["rom"] else "") + f'{L["es"]}\n\n')
+        fh.write(f'{n}\n{f(L["start"])} --> {f(L["end"])}\n{L["text"]}\n' + (f'{L["rom"]}\n' if L["rom"] else "") + (f'{L["es"]}\n' if L["es"] else "") + "\n")
 
 # --- post-pass: snap line starts to nearest vocal onset (<=150 ms), remove overlaps, report ---
 import librosa
@@ -77,4 +84,4 @@ print("lines without vocal onset within 150 ms:", bad)
 json.dump({"language": SRC["language"], "script": SRC.get("script", ""), "lines": out}, open(pr.p("lyrics", "lyrics.json"), "w"), ensure_ascii=False, indent=1)
 with open(pr.p("lyrics", "lyrics.srt"), "w") as fh:
     for n, L in enumerate(out, 1):
-        fh.write(f'{n}\n{f(L["start"])} --> {f(L["end"])}\n{L["text"]}\n' + (f'{L["rom"]}\n' if L["rom"] else "") + f'{L["es"]}\n\n')
+        fh.write(f'{n}\n{f(L["start"])} --> {f(L["end"])}\n{L["text"]}\n' + (f'{L["rom"]}\n' if L["rom"] else "") + (f'{L["es"]}\n' if L["es"] else "") + "\n")
