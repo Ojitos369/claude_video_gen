@@ -336,3 +336,10 @@ a { color: var(--accent); }
   .composer-side .btn { grid-column: 1 / -1; }
   .composer-side .model-select.is-compact select { max-width: 130px; }
 }
+
+/* pending questions form */
+.questions { display: grid; gap: 12px; margin: 8px 0; }
+.questions .q { border: 0; padding: 0; margin: 0; display: grid; gap: 6px; }
+.questions legend { font-weight: 600; margin-bottom: 4px; }
+.questions .q-opt { display: flex; gap: 8px; align-items: center; min-height: 44px; cursor: pointer; }
+.questions .q-custom { min-height: 44px; }

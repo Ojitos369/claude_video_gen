@@ -57,6 +57,8 @@ servidor solo escucha en 127.0.0.1), `WORKSPACE_DIR`.
   ElevenLabs y Musicful, con botón "Probar"; voz (Edge TTS gratis, Piper y Kokoro de código abierto locales, Google Gemini TTS
   `gemini-3.8-flash-tts`, OpenAI, ElevenLabs); imágenes (Google Gemini, OpenAI); música (Musicful); herramientas permitidas por defecto; acceso desde el
   teléfono (QR); datos del equipo.
+- **Modelos 3D**: Blender sin ventana (`engine/tools/gen_model.py`; ruta en Ajustes -> Modelos 3D, por defecto `~/Documents/apps/blender/blender`). Interruptor de preguntas (general, no solo 3D): encendido, Claude deja `preguntas.json` y la app muestra un formulario (opción múltiple o respuesta propia); apagado, decide solo.
+- **Desde otros agentes** (Claude Code, Codex, Gemini, Antigravity…): servidor MCP y skill en `integrations/` (ver su README).
 - **Nuevo video**: arrastra archivos (audio, video, imágenes, guiones, referencias), escribe qué quieres y elige formato y modelo.
   y qué herramientas puede usar Claude (generar imágenes / voz / música). Los archivos se guardan en `projects/<id>/` con `solicitud.md` y un
   `config.json` inicial; Claude recibe los datos del equipo y las herramientas disponibles (nunca las claves); el trabajo entra a una cola
@@ -194,7 +196,7 @@ python engine/voxel/build.py mi_tema --jobs 2        # config: "background": {"t
 - **Letra / subtítulos**: `lyrics_mode` (auto | orig | orig+es | orig+rom+es), `caption_position` (center | bottom), `text_size`,
   `text_pulse`, `text_colors`, `font_bold` / `font_regular` / `font_index` (NotoSansCJK: 0 JP, 1 KR, 2 SC, 3 TC).
 - **Render**: `fade_out`, `segment_seconds`, `jobs` (default: `machine.render_jobs`), `nvenc_cq` (calidad), `whisper_model`, `output`,
-  `scene_canvas` (lienzo de las escenas 2D, p. ej. [540, 540] para 1:1). El codificador sale de `machine.video_encoder`.
+  `scene_canvas` (lienzo de las escenas 2D, p. ej. [540, 540] para 1:1). `wide_panels: true` (salida horizontal con escenas verticales): paneles laterales con el mismo corte en otras variantes, atenuados, en vez de solo el fondo desenfocado. El codificador sale de `machine.video_encoder`.
 
 ## Escenas 2D
 - `sc_<nombre>(t, lt, v, p, e, bt, blk)` devuelve un array RGB de 540x960 (lienzo vertical): `t` tiempo, `lt` tiempo en el corte,

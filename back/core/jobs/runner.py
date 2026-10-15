@@ -18,17 +18,21 @@ from core.conf.workspace import local_settings, machine as machine_info
 
 JOBS_GROUP = "jobs"          # websocket group that receives list updates of every job
 VIDEO_EXT = (".mp4", ".webm", ".mov", ".mkv")
+HTML_EXT = (".html", ".htm")
 MAX_TEXT = 4000
 
 SYSTEM_PROMPT = """Estás corriendo desde la app web local "Video Studio" del generador universal de videos. No hay un usuario
-interactivo: NO hagas preguntas ni esperes confirmación; decide con criterio, anota los supuestos en PROGRESO.md y continúa.
+interactivo: NO hagas preguntas ni esperes confirmación (única excepción: el modo de preguntas de modelos 3D, si se activa abajo); decide con criterio, anota los supuestos en PROGRESO.md y continúa.
 - Sigue CLAUDE.md del workspace y el flujo del tipo de proyecto que corresponda. Usa el motor de engine/ y el venv .venv.
 - Trabaja dentro de projects/{id}/ (y en engine/ solo si hay que extender el motor de forma genérica).
 - Guarda las instrucciones del usuario en projects/{id}/prompt.md (a partir de engine/templates/prompt.md) y mantén PROGRESO.md
   actualizado en cada paso: la app lo muestra en vivo.
 - Cada comando de Bash debe terminar en menos de 10 minutos: los renders largos se hacen por segmentos (engine/render.py reanuda
   los segmentos ya hechos si lo vuelves a ejecutar). No uses comandos en segundo plano.
-- El video final debe quedar en projects/{id}/out/. Revisa fotogramas antes del render completo.
+- El video final debe quedar en projects/{id}/out/. Si el pedido también pide HTML (página, visor, reproductor interactivo), déjalo en
+  out/ como archivo autocontenido (.html con sus recursos inline o en out/); si el pedido es solo un modelo 3D o una imagen, el entregable
+  va en out/ en lugar del video. Si el pedido cita un proyecto o carpeta de origen (ruta absoluta), léelo en modo solo lectura para
+  basar el contenido en él; nunca lo modifiques. Revisa fotogramas antes del render completo.
 - Al terminar responde con un resumen breve en español: qué hiciste, la ruta del video y lo que convenga revisar."""
 
 
@@ -73,6 +77,29 @@ def context_prompt(job_id, tools):
         out.append("La generación de música está permitida, pero no hay proveedor configurado: no la uses.")
     else:
         out.append("No generes música con IA en este trabajo.")
+    if tools.get("models") and local_settings.blender_bin():
+        m3 = s["models3d"]
+        out.append(f"Herramienta de modelos 3D disponible (Blender {m3['bin']}, máximo {m3['max_per_project']} por proyecto): escribe un script bpy "
+                   f"en projects/{job_id}/assets/<nombre>.py (solo construye la geometría y materiales en la escena vacía: sin exportar ni renderizar) y ejecútalo con "
+                   f"`{py} engine/tools/gen_model.py {job_id} --script assets/<nombre>.py --out assets/<nombre>.glb [--preview assets/<nombre>.png] "
+                   "[--turntable assets/<nombre>_giro 36] [--res 768] [--note \"para qué es\"]`. Formatos: .glb .obj .fbx .stl .ply .blend. "
+                   "Revisa las vistas previas (_back y _side también), corrige el script hasta que el modelo se vea bien, y úsalo en el video "
+                   "(el giro 360° son cuadros PNG que puedes pasar a video con ffmpeg o usar como clip). Anota en PROGRESO.md qué modelaste.")
+    elif tools.get("models"):
+        out.append("El modelado 3D está permitido, pero Blender no está configurado/encontrado en los ajustes: no lo uses.")
+    else:
+        out.append("No generes modelos 3D con Blender en este trabajo.")
+    if tools.get("ask"):
+        out.append(f"Modo con preguntas ACTIVO (excepción a 'no hagas preguntas'): si el pedido deja dudas que cambian mucho el resultado y NO es la "
+                   "continuación de un pedido ya respondido (estilo visual, paleta, tono, duración, qué contenido incluir o excluir, formas y "
+                   "proporciones de un modelo 3D, personajes, referencias), NO produzcas todavía: escribe "
+                   f"`projects/{job_id}/preguntas.json` con `{{\"preguntas\":[{{\"id\":\"estilo\",\"texto\":\"…?\",\"opciones\":[\"A\",\"B\",\"C\"],"
+                   "\"multiple\":false}]}` (2-5 preguntas; 2-4 opciones cada una, la recomendada primero y marcada '(recomendada)'; la app añade "
+                   "siempre la opción de escribir una respuesta propia) y termina con una respuesta final de una línea. Solo preguntas de contenido, estilo o "
+                   "forma; NUNCA de procesos técnicos (herramientas, formatos, pasos, comandos): eso lo decides tú. Las respuestas llegan como pedido de "
+                   "cambios: entonces produce sin volver a preguntar lo ya contestado. Si el pedido ya es claro, produce directamente sin preguntar.")
+    else:
+        out.append("Modo automático: no hagas preguntas de estilo ni de contenido; elige tú lo que mejor encaje con el pedido y anota las decisiones en PROGRESO.md.")
     return "\n".join(out)
 
 
@@ -281,7 +308,7 @@ class Job:
             p = os.path.join(out, name)
             if os.path.isfile(p) and not name.endswith(".part.mp4"):
                 files.append({"path": f"out/{name}", "name": name, "size": os.path.getsize(p), "mtime": os.path.getmtime(p),
-                              "video": name.lower().endswith(VIDEO_EXT)})
+                              "video": name.lower().endswith(VIDEO_EXT), "html": name.lower().endswith(HTML_EXT)})
         return files
 
     def files(self):
@@ -306,8 +333,18 @@ class Job:
 
     def detail(self):
         m = self.meta()
-        return m | {"model": m.get("model") or CLAUDE_MODEL, "effort": m.get("effort") or CLAUDE_EFFORT, "outputs": self.outputs(), "files": self.files(), "progress": self.progress(),
+        return m | {"model": m.get("model") or CLAUDE_MODEL, "effort": m.get("effort") or CLAUDE_EFFORT, "outputs": self.outputs(), "files": self.files(), "progress": self.progress(), "questions": self.questions(),
                     "format": self.format()}
+
+    def questions(self):
+        """Pending style/content questions Claude left in preguntas.json (shown as a form; answers go back as a change request)."""
+        try:
+            with open(os.path.join(self.dir, "preguntas.json"), encoding="utf-8") as f:
+                qs = json.load(f).get("preguntas") or []
+        except (OSError, ValueError, AttributeError):
+            return []
+        return [{"id": str(q.get("id") or i), "texto": str(q.get("texto") or ""), "opciones": [str(o) for o in q.get("opciones") or []],
+                 "multiple": bool(q.get("multiple"))} for i, q in enumerate(qs) if isinstance(q, dict) and q.get("texto")]
 
     def format(self):
         """Output format as configured now in the project's config.json (e.g. what claude chose for a manual format)."""
@@ -431,6 +468,8 @@ class Runner:
         m = job.meta()
         model, effort = valid_model(model or m.get("model")), valid_effort(effort or m.get("effort"))
         saved = await save_uploads(job.dir, uploads)
+        q = os.path.join(job.dir, "preguntas.json")
+        if os.path.exists(q): os.replace(q, os.path.join(job.dir, "preguntas_respondidas.json"))
         text = text or "Agregué archivos nuevos al proyecto: úsalos donde corresponda."
         with open(os.path.join(job.dir, "solicitud.md"), "a") as f:
             f.write(f"\n## Pedido de cambios · {now().replace('T', ' ')}\n\n{text}\n"

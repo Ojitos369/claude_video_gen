@@ -21,7 +21,9 @@ DEFAULTS = {
     "tts": {"provider": "none", "model": "", "voice": "", "language": "es"},
     "images": {"provider": "none", "model": "", "max_per_project": 12},
     "music": {"provider": "none", "model": "", "max_per_project": 4},
-    "generation": {"images": True, "tts": False, "music": False},     # tools offered to Claude by default in new jobs
+    "models3d": {"bin": "/home/ojitos369/Documents/apps/blender/blender", "max_per_project": 6, "engine": "CYCLES"},   # Blender (3D models)
+    "generation": {"images": True, "tts": False, "music": False, "models": False,   # tools offered to Claude by default in new jobs
+                   "ask": True},   # models only: ask style/shape questions before modelling (False: decide alone)
 }
 
 # catalogue shown in the app (free text is also accepted for models)
@@ -99,7 +101,7 @@ def update(patch):
         s["providers"][name].update({k: v for k, v in p.items() if k in DEFAULTS["providers"][name]})
     if (patch.get("providers") or {}).get("musicful", {}).get("api_key") and s["music"]["provider"] == "none":
         s["music"]["provider"] = "musicful"   # only music provider: saving its key is enough to enable it
-    for sec in ("tts", "images", "music", "generation"):
+    for sec in ("tts", "images", "music", "models3d", "generation"):
         if isinstance(patch.get(sec), dict):
             s[sec].update({k: v for k, v in patch[sec].items() if k in DEFAULTS[sec]})
     if patch.get("theme") in ("dark", "light"):
@@ -109,6 +111,15 @@ def update(patch):
         if patch["access"].get("regenerate_token"): s["access"]["token"] = secrets.token_urlsafe(18)
     save(s)
     return s
+
+
+def blender_bin():
+    """Configured Blender binary (settings -> models3d.bin; BLENDER_BIN overrides), else `blender` on PATH. None if not found."""
+    import shutil
+    for c in (os.environ.get("BLENDER_BIN"), load()["models3d"].get("bin")):
+        if c and os.path.isfile(c) and os.access(c, os.X_OK): return c
+        if c and shutil.which(c): return shutil.which(c)
+    return shutil.which("blender")
 
 
 def key(provider):

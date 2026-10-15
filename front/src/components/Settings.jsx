@@ -198,6 +198,22 @@ export default function Settings({ settings: s, onChange }) {
         <ProviderPicker section="music" catalog={s.catalog.music} value={s.music} keys={keys} onSave={(v) => save({ music: v })} />
       </Section>}
 
+      {s.models3d && <Section icon={<Image />} title="Modelos 3D (Blender)" note="Claude escribe un script de Blender y esta herramienta lo ejecuta sin ventana para exportar el modelo (.glb, .obj, .fbx…) con vistas previas.">
+        <div className="grid-fields">
+          <label className="field full">
+            <span>Ruta del binario de Blender</span>
+            <input defaultValue={s.models3d.bin} placeholder="/ruta/a/blender"
+              onBlur={(e) => e.target.value.trim() !== s.models3d.bin && save({ models3d: { bin: e.target.value.trim() } })} />
+          </label>
+          <label className="field">
+            <span>Máximo por proyecto</span>
+            <input type="number" min="1" max="50" defaultValue={s.models3d.max_per_project}
+              onBlur={(e) => save({ models3d: { max_per_project: Math.max(1, Math.min(50, +e.target.value || 6)) } })} />
+          </label>
+        </div>
+        <p className={s.blender?.found ? 'muted full' : 'bad-text full'}>{s.blender?.found ? `✓ ${s.blender.detail}` : 'Blender no encontrado en esa ruta ni en el PATH'}</p>
+      </Section>}
+
       <Section icon={<Image />} title="Herramientas en las generaciones" note="Valores por defecto al crear un video (se pueden cambiar en cada trabajo). Claude solo las usa si ayudan.">
         <Toggle checked={s.generation.images} onChange={(v) => save({ generation: { images: v } })} label="Permitir generar imágenes"
           hint={s.images.provider === 'none' ? 'Configura un proveedor de imágenes para que esté disponible' : s.catalog.images[s.images.provider]?.label} />
@@ -205,6 +221,10 @@ export default function Settings({ settings: s, onChange }) {
           hint={s.tts.provider === 'none' ? 'Configura un proveedor de voz para que esté disponible' : s.catalog.tts[s.tts.provider]?.label} />
         {s.music && <Toggle checked={s.generation.music} onChange={(v) => save({ generation: { music: v } })} label="Permitir generar música"
           hint={s.music.provider === 'none' ? 'Configura un proveedor de música para que esté disponible' : s.catalog.music[s.music.provider]?.label} />}
+        <Toggle checked={s.generation.models} onChange={(v) => save({ generation: { models: v } })} label="Permitir generar modelos 3D"
+          hint={s.blender?.found ? s.blender.detail : 'Configura la ruta de Blender para que esté disponible'} />
+        <Toggle checked={s.generation.ask} onChange={(v) => save({ generation: { ask: v } })} label="Hacer preguntas antes de producir"
+          hint="Encendido: si el pedido deja dudas de estilo o contenido, Claude hace preguntas de opción múltiple (o respuesta propia) antes de producir. Apagado: decide solo." />
       </Section>
 
       <Section icon={<Phone />} title="Acceso desde el teléfono" note="El servicio escucha en tu red local y pide un token a los demás dispositivos. Úsalo solo en redes de confianza: Claude puede ejecutar comandos en este equipo.">

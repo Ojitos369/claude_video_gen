@@ -88,10 +88,10 @@ if missing: sys.exit(f"storyboard uses unknown motifs {missing}; available: {sor
 _yy, _xx = np.mgrid[0:BH, 0:BW]
 VIG = (1 - 0.55 * (((_xx - BW / 2) / (BW * 0.75)) ** 2 + ((_yy - BH / 2) / (BH * 0.75)) ** 2)).clip(0.35, 1)[..., None].astype(np.float32)
 
-def draw_cut(ci, t):
+def draw_cut(ci, t, voff=0):
     cut = CUTS[ci]
     lt = t - cut["t"]
-    arr = SCENES[cut["motif"]](t, lt, cut["v"], pulse(t), en(t), t - cut["bstart"], cut["blk"])
+    arr = SCENES[cut["motif"]](t, lt, cut["v"] + voff, pulse(t), en(t), t - cut["bstart"], cut["blk"])
     return np.asarray(arr, np.float32)
 
 def pause_amount(t):
@@ -150,21 +150,21 @@ def transition(kind, a, b, u, ci):
         return np.where(cols[None, :, None], b, a)
     return a * (1 - u) + b * u
 
-def background(t):
+def background(t, voff=0, compose=True):
     ci = max(0, int(np.searchsorted(CUT_T, t, side="right") - 1))
     cut = CUTS[ci]
     lt = t - cut["t"]
-    img = draw_cut(ci, t)
+    img = draw_cut(ci, t, voff)
     kind = section_at(t)["kind"]
     zoom_punch = 0.0
     if cut["hard"]:
         zoom_punch = 0.14 * math.exp(-lt / 0.25)
         img = img + (255 - img) * (0.6 * math.exp(-lt / 0.12))            # flash
     elif ci > 0 and TRANS and lt < TR_DUR:
-        img = transition(TRANS[ci % len(TRANS)], draw_cut(ci - 1, t), img, lt / TR_DUR, ci)
+        img = transition(TRANS[ci % len(TRANS)], draw_cut(ci - 1, t, voff), img, lt / TR_DUR, ci)
     elif ci > 0 and not TRANS and lt < 0.2:
         k = lt / 0.2
-        img = draw_cut(ci - 1, t) * (1 - k) + img * k                         # soft cross-dissolve
+        img = draw_cut(ci - 1, t, voff) * (1 - k) + img * k                         # soft cross-dissolve
     img = img * VIG
     if CFG["beat_fx"]:
         sh = int(round(3 * pulse(t) ** 1.5))
@@ -184,12 +184,18 @@ def background(t):
     x0 = min(max(0, x0), BW - w); y0 = min(max(0, y0), BH - h)
     if VERTICAL:
         return im.resize((W, H), Image.BILINEAR, box=(x0, y0, x0 + w, y0 + h))
+    if not compose: return im.resize((int(BW * min(W / BW, H / BH)), int(BH * min(W / BW, H / BH))), Image.BILINEAR, box=(x0, y0, x0 + w, y0 + h))
     fh = H; fw = int(fh * BW / BH)
     if fw > W: fw = W; fh = int(fw * BH / BW)
     cw = max(W / BW, H / BH)                                   # cover scale for the backdrop
     back = im.resize((int(BW * cw / 4), int(BH * cw / 4)), Image.BILINEAR).filter(ImageFilter.GaussianBlur(6))
     back = Image.eval(back.resize((int(BW * cw), int(BH * cw)), Image.BILINEAR), lambda c: int(c * 0.55))
     out = back.crop(((back.width - W) // 2, (back.height - H) // 2, (back.width - W) // 2 + W, (back.height - H) // 2 + H))
+    if CFG["wide_panels"] and W - fw >= fw:      # side panels: same cut, other variants, dimmed
+        gap = int(CFG["wide_panels"] if CFG["wide_panels"] is not True else 16 * S)
+        for k, x in ((1, (W - fw) // 2 - fw - gap), (2, (W + fw) // 2 + gap)):
+            side = background(t, k, False).resize((fw, fh))
+            out.paste(Image.eval(side, lambda c: int(c * 0.6)), (x, (H - fh) // 2))
     out.paste(im.resize((fw, fh), Image.BILINEAR, box=(x0, y0, x0 + w, y0 + h)), ((W - fw) // 2, (H - fh) // 2))
     return out
 

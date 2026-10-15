@@ -30,6 +30,7 @@ DEFAULTS = {
     "caption_position": "center",  # center | bottom (lower third, e.g. subtitles for narration)
     "voice": None,                 # separate clean voice/narration file: used instead of Demucs vocals for transcription/alignment
     "beats_audio": None,           # file analysed by beats.py (default: the project audio), e.g. a music bed
+    "wide_panels": False,          # wide output with vertical scenes: True (or gap px) adds side panels with the same cut in other variants
     "scene_canvas": None,          # [w, h] design canvas of scenes (default [540, 960]); use [540, 540] for 1:1 projects
     "segment_seconds": 10, "jobs": None,          # None: machine.render_jobs from settings.local.json
     "nvenc_cq": 19, "audio_bitrate": "320k",

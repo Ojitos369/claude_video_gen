@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useMemo } from 'react'
 import { api, openSocket, fmtCost, fmtDur, fmtSize } from '../api.js'
 import Timeline, { buildItems } from './Timeline.jsx'
+import Questions from './Questions.jsx'
 import Results from './Results.jsx'
 import Markdown from './Markdown.jsx'
 import StatusBadge from './StatusBadge.jsx'
@@ -170,6 +171,13 @@ export default function JobView({ id, models, efforts, onDeleted }) {
             <Timeline items={items} live={running} models={models} efforts={efforts} />
             {running && <div className="typing"><span /><span /><span /></div>}
           </div>
+          {!running && job.questions?.length > 0 && (
+            <Questions questions={job.questions} disabled={sending !== null} onSubmit={async (t) => {
+              setError(''); setSending(0)
+              try { await api.message(id, { text: t, model: model || job.model, effort: effort || job.effort }, setSending); reload() }
+              catch (err) { setError(err.message) } finally { setSending(null) }
+            }} />
+          )}
           <form className="composer" onSubmit={send}>
             {files.length > 0 && (
               <ul className="file-chips composer-files">

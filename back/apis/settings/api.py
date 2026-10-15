@@ -33,6 +33,17 @@ def codex_status():
     return {"installed": True, "bin": codex, "logged_in": "logged in" in txt.lower(), "detail": txt.splitlines()[0] if txt else ""}
 
 
+def blender_status():
+    b = local_settings.blender_bin()
+    if not b:
+        return {"found": False, "detail": "Blender no encontrado"}
+    try:
+        out = subprocess.run([b, "--version"], capture_output=True, text=True, timeout=30).stdout.strip().splitlines()
+    except Exception as e:
+        return {"found": False, "detail": str(e)}
+    return {"found": True, "bin": b, "detail": out[0] if out else "Blender"}
+
+
 def http_ok(url, headers):
     req = urllib.request.Request(url, headers=headers)
     try:
@@ -54,12 +65,13 @@ class GetSettings(AsyncApi):
         s["catalog"] = {"tts": local_settings.TTS_PROVIDERS, "images": local_settings.IMAGE_PROVIDERS, "music": local_settings.MUSIC_PROVIDERS}
         s["machine_summary"] = machine.summary(s.get("machine")) if s.get("machine") else ""
         s["codex"] = await run_in_threadpool(codex_status)
+        s["blender"] = await run_in_threadpool(blender_status)
         self.response = {"settings": s}
 
 
 class SaveSettings(AsyncApi):
     async def main(self):
-        patch = {k: v for k, v in self.data.items() if k in ("theme", "providers", "tts", "images", "music", "generation", "access")}
+        patch = {k: v for k, v in self.data.items() if k in ("theme", "providers", "tts", "images", "music", "models3d", "generation", "access")}
         local_settings.update(patch)
         self.response = {"ok": True}
 
