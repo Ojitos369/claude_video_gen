@@ -59,7 +59,12 @@ def context_prompt(job_id, tools):
         prov = local_settings.TTS_PROVIDERS.get(tts["provider"], {}).get("label", tts["provider"])
         out.append(f"Herramienta de voz (TTS) disponible ({prov}, modelo {tts['model'] or 'por defecto'}, voz {tts['voice'] or 'por defecto'}, idioma {tts['language']}): "
                    f"`{py} engine/tools/tts.py {job_id} --text \"…\" | --file <txt> --out audio/<nombre>.wav [--voice X] [--instructions \"tono\"]`. "
-                   "Úsala cuando el pedido necesite narración o voz y no la haya en los archivos; genera por párrafos y concaténalos.")
+                   "Úsala cuando el pedido necesite narración o voz y no la haya en los archivos; genera por párrafos y concaténalos. "
+                   f"Voz: la de los ajustes ({tts['voice'] or 'por defecto'}) es solo el valor por defecto. Si el pedido (o el chat) NO dice cómo debe sonar la voz, "
+                   "no pases --voice (se usa la de ajustes). Si SÍ lo especifica (género, edad, acento, tono, personaje, idioma), busca en internet "
+                   f"cuál voz del proveedor {prov} se ajusta mejor (catálogo oficial de voces/muestras, con búsqueda web), pásala con --voice "
+                   "(y --instructions para el tono si el proveedor lo soporta), y anota en PROGRESO.md qué voz elegiste y por qué. "
+                   "Si el proveedor no tiene una voz adecuada, usa la de ajustes y avísalo.")
     elif tools.get("tts"):
         out.append("La voz sintética está permitida, pero no hay proveedor de TTS configurado: no la uses.")
     else:
