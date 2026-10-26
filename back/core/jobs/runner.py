@@ -6,6 +6,7 @@ import json
 import os
 import re
 import signal
+import sys
 import time
 import unicodedata
 from datetime import datetime
@@ -157,6 +158,14 @@ def kill_tree(pid):
             pass
 
 
+def inbox_hooks(job):
+    """--settings for a run: hooks that hand claude the messages sent from the app while it works (core/jobs/inbox_hook.py)."""
+    q = lambda p: '"' + p.replace("\\", "/") + '"'
+    hook = os.path.join(os.path.dirname(os.path.abspath(__file__)), "inbox_hook.py")
+    cmd = lambda ev: [{"hooks": [{"type": "command", "command": f"{q(sys.executable)} {q(hook)} {q(job.inbox_path)} {ev}", "timeout": 30}]}]
+    return json.dumps({"hooks": {"PostToolUse": cmd("PostToolUse"), "Stop": cmd("Stop")}})
+
+
 def valid_tools(tools):
     """Generation tools allowed in a job; defaults from settings.local.json -> generation."""
     base = dict(local_settings.load()["generation"])
@@ -274,6 +283,17 @@ class Job:
         self.app = os.path.join(self.dir, ".app")
         self.meta_path = os.path.join(self.app, "job.json")
         self.events_path = os.path.join(self.app, "events.jsonl")
+        self.inbox_path = os.path.join(self.app, "inbox.jsonl")   # messages sent while claude works (read by inbox_hook.py)
+
+    def take_inbox(self):
+        """Messages the hook did not deliver (claude ended or was stopped first); empties the inbox."""
+        try:
+            with open(self.inbox_path, encoding="utf-8") as f:
+                msgs = [json.loads(line) for line in f if line.strip()]
+            os.remove(self.inbox_path)
+            return msgs
+        except (OSError, ValueError):
+            return []
 
     # ---------------------------------------------------------- state
     def adopt(self):
@@ -343,7 +363,7 @@ class Job:
 
     def detail(self):
         m = self.meta()
-        return m | {"model": m.get("model") or CLAUDE_MODEL, "effort": m.get("effort") or CLAUDE_EFFORT, "outputs": self.outputs(), "files": self.files(), "progress": self.progress(), "questions": self.questions(),
+        return m | {"tools": m.get("tools") or valid_tools(None), "model": m.get("model") or CLAUDE_MODEL, "effort": m.get("effort") or CLAUDE_EFFORT, "outputs": self.outputs(), "files": self.files(), "progress": self.progress(), "questions": self.questions(),
                     "format": self.format()}
 
     def questions(self):
@@ -480,14 +500,19 @@ class Runner:
         saved = await save_uploads(job.dir, uploads)
         q = os.path.join(job.dir, "preguntas.json")
         if os.path.exists(q): os.replace(q, os.path.join(job.dir, "preguntas_respondidas.json"))
-        text = text or "Agregué archivos nuevos al proyecto: úsalos donde corresponda."
-        with open(os.path.join(job.dir, "solicitud.md"), "a") as f:
-            f.write(f"\n## Pedido de cambios · {now().replace('T', ' ')}\n\n{text}\n"
-                    + (("\nArchivos agregados:\n" + "".join(f"- {s['name']}\n" for s in saved)) if saved else ""))
+        # messages sent while it worked that claude never got (already in solicitud.md and in the timeline): part of this request
+        left = "".join(f"\n\nMensaje enviado mientras trabajabas (no llegó a tiempo): {x['text']}"
+                       + (f" (archivos: {', '.join(x['files'])})" if x.get("files") else "") for x in job.take_inbox())
+        if text or saved or not left:
+            text = text or "Agregué archivos nuevos al proyecto: úsalos donde corresponda."
+            with open(os.path.join(job.dir, "solicitud.md"), "a") as f:
+                f.write(f"\n## Pedido de cambios · {now().replace('T', ' ')}\n\n{text}\n"
+                        + (("\nArchivos agregados:\n" + "".join(f"- {s['name']}\n" for s in saved)) if saved else ""))
+            await self.emit(job, "user", text=text, files=[s["name"] for s in saved], model=model, effort=effort)
+        text = text or "Atiende los mensajes del usuario de abajo."
         job.save(model=model, effort=effort, files=(m.get("files") or []) + saved)
-        await self.emit(job, "user", text=text, files=[s["name"] for s in saved], model=model, effort=effort)
         await self.set_status(job, "queued", step="En cola", error=None)
-        new = f"\n\nArchivos nuevos (ya están en `projects/{job.id}/`):\n{files_text(saved)}" if saved else ""
+        new = (f"\n\nArchivos nuevos (ya están en `projects/{job.id}/`):\n{files_text(saved)}" if saved else "") + left
         if m.get("session_id"):
             await self.enqueue(job, f"Pedido de cambios del usuario sobre `projects/{job.id}/`:\n{text}{new}\n\n"
                                     "Parte del estado actual del proyecto (lo que ya se hizo sigue en su carpeta); cambia solo lo necesario, "
@@ -510,18 +535,54 @@ class Runner:
         await manager.broadcast_to_group(json.dumps({"type": "job", "job": job.summary()}, ensure_ascii=False), JOBS_GROUP)
         await manager.broadcast_to_group(json.dumps({"type": "renamed", "name": name}, ensure_ascii=False), job.id)
 
+    async def message(self, job, text, uploads=()):
+        """Message sent while the job is queued or running: claude gets it through inbox_hook.py after its next tool call
+        (or right before it would stop), in the same run."""
+        saved = await save_uploads(job.dir, uploads)
+        text = text or "Agregué archivos nuevos al proyecto: úsalos donde corresponda."
+        with open(os.path.join(job.dir, "solicitud.md"), "a") as f:
+            f.write(f"\n## Mensaje durante el trabajo · {now().replace('T', ' ')}\n\n{text}\n"
+                    + (("\nArchivos agregados:\n" + "".join(f"- {s['name']}\n" for s in saved)) if saved else ""))
+        with open(job.inbox_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"t": now(), "text": text, "files": [s["name"] for s in saved]}, ensure_ascii=False) + "\n")
+        job.save(files=(job.meta().get("files") or []) + saved)
+        await self.emit(job, "user", text=text, files=[s["name"] for s in saved], live=True)
+
+    async def set_options(self, job, tools=None, model=None, effort=None):
+        """Project options after creation: generation tools / questions and the default model and effort. They apply from the
+        next run; a running claude is told the new tool permissions through the inbox."""
+        m = job.meta()
+        old = m.get("tools") or valid_tools(None)
+        new = valid_tools({**old, **(tools or {})}) if tools is not None else old
+        job.save(tools=new, model=valid_model(model or m.get("model")), effort=valid_effort(effort or m.get("effort")))
+        if new != old and m.get("status") in ("running", "queued"):
+            names = {"images": "imágenes", "tts": "voz", "music": "música", "models": "modelos 3D", "ask": "preguntas"}
+            diff = ", ".join(f"{names.get(k, k)}: {'sí' if v else 'no'}" for k, v in new.items() if v != old.get(k))
+            await self.message(job, f"Cambié las opciones del proyecto ({diff}). Desde ahora respeta estos permisos "
+                                    "(lo permitido puedes usarlo según las instrucciones de esas herramientas; lo no permitido ya no lo uses).")
+        await manager.broadcast_to_group(json.dumps({"type": "job", "job": job.summary()}, ensure_ascii=False), JOBS_GROUP)
+
     async def cancel(self, job):
+        """Stops the job and drops it (and the undelivered messages)."""
+        await self.stop(job, "cancelled", step="Cancelado")
+        job.take_inbox()
+
+    async def interrupt(self, job):
+        """Stops the current run but keeps the job ready to continue in the same session."""
+        await self.stop(job, "interrupted", step="Interrumpido", error="Interrumpido por el usuario.")
+
+    async def stop(self, job, status, **extra):
         p = job.meta().get("proc")
         if p and pid_alive(p["pid"]):
             kill_tree(p["pid"])
-        await self.set_status(job, "cancelled", step="Cancelado", pending=None)
+        await self.set_status(job, status, pending=None, **extra)
 
     # ---------------------------------------------------------- run claude
     async def run(self, job, prompt, resume, model, effort):
         m = job.meta()
         system = SYSTEM_PROMPT.format(id=job.id) + "\n" + context_prompt(job.id, m.get("tools") or valid_tools(None))
         cmd = claude_command(CLAUDE_BIN) + ["-p", prompt, "--model", model, "--effort", effort, "--output-format", "stream-json", "--verbose",
-               "--permission-mode", CLAUDE_PERMISSION_MODE, "--append-system-prompt", system]
+               "--permission-mode", CLAUDE_PERMISSION_MODE, "--append-system-prompt", system, "--settings", inbox_hooks(job)]
         env = dict(os.environ)
         ant = local_settings.load()["providers"]["anthropic"]
         if ant.get("use_api_key") and ant.get("api_key"):
@@ -583,8 +644,8 @@ class Runner:
             watcher.cancel()
             self.procs.pop(job.id, None)
         result, run = p.get("result"), p["run"]
-        if job.meta().get("status") == "cancelled":
-            run.update(status="cancelled", ended=now())
+        if job.meta().get("status") in ("cancelled", "interrupted"):
+            run.update(status=job.meta()["status"], ended=now())
             job.save(runs=job.meta().get("runs", []) + [run], proc=None); return
         code = proc.returncode if proc else 0
         ok = code == 0 and result is not None and not result.get("is_error")
@@ -593,7 +654,9 @@ class Runner:
                    turns=(result or {}).get("num_turns"), duration_ms=(result or {}).get("duration_ms"))
         job.save(runs=job.meta().get("runs", []) + [run], cost=cost, proc=None)
         await self.emit(job, "outputs", files=job.outputs())
-        if ok:
+        if ok and os.path.exists(job.inbox_path):   # a message arrived after the last hook ran: continue with it
+            await self.follow_up(job, "", run["model"], run["effort"])
+        elif ok:
             await self.set_status(job, "done", step="Terminado")
         else:
             err = ""

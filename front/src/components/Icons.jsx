@@ -19,6 +19,7 @@ export const Check = () => <I d="M5 12.5l4.5 4.5L19 7" />
 export const Alert = () => <I><path d="M12 4l9 16H3z" /><path d="M12 10v4M12 17h.01" /></I>
 export const Film = () => <I><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M7 5v14M17 5v14M3 9.5h4M3 14.5h4M17 9.5h4M17 14.5h4" /></I>
 export const Stop = () => <I><rect x="6" y="6" width="12" height="12" rx="2" /></I>
+export const Pause = () => <I d="M9 6v12M15 6v12" />
 export const Trash = () => <I><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" /></I>
 export const Download = () => <I><path d="M12 4v12M7 11l5 5 5-5" /><path d="M5 20h14" /></I>
 export const Chevron = ({ open }) => <I d="M9 6l6 6-6 6" style={{ transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .15s' }} />

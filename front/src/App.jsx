@@ -52,7 +52,7 @@ export default function App() {
       <Sidebar jobs={jobs} current={r.view === 'job' ? r.id : null} view={r.view} onOpen={(id) => { setDrawer(false); open(id) }} status={status} />
       <main className="main">
         {r.view === 'settings' && <Settings settings={settings} onChange={loadSettings} />}
-        {r.view === 'job' && <JobView key={r.id} id={r.id} models={status?.models} efforts={status?.efforts} onDeleted={() => { refresh(); open(null) }} />}
+        {r.view === 'job' && <JobView key={r.id} id={r.id} settings={settings} models={status?.models} efforts={status?.efforts} onDeleted={() => { refresh(); open(null) }} />}
         {r.view === 'new' && <NewJob status={status} settings={settings} onCreated={(job) => { refresh(); open(job.id) }} />}
       </main>
     </div>

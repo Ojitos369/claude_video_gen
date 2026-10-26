@@ -222,6 +222,9 @@ a { color: var(--accent); }
 .rename { display: flex; align-items: center; gap: 4px; margin: 0 0 6px; }
 .rename input { flex: 1; min-width: 0; font-size: 18px; font-weight: 650; background: var(--panel); border: 1px solid var(--accent); border-radius: var(--radius-sm); padding: 6px 10px; }
 .rename input:focus { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+.job-options { padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); display: grid; gap: 10px; }
+.job-options .tools { margin: 0; }
+.job-options .hint { margin: 0; }
 .live-step { display: flex; align-items: center; gap: 10px; padding: 9px 14px; border-radius: var(--radius-sm); background: color-mix(in srgb, var(--live) 9%, var(--panel)); border: 1px solid color-mix(in srgb, var(--live) 30%, transparent); }
 .live-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; }
 .mtabs { display: flex; gap: 2px; overflow-x: auto; border-bottom: 1px solid var(--line); margin: 0 -12px; padding: 0 8px; position: sticky; top: 54px; z-index: 5; background: var(--bg); }

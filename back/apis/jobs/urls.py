@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import FileResponse
-from .api import ListJobs, CreateJob, JobDetail, JobEvents, JobMessage, CancelJob, DeleteJob, RenameJob, get_job
+from .api import ListJobs, CreateJob, JobDetail, JobEvents, JobMessage, CancelJob, InterruptJob, JobOptions, DeleteJob, RenameJob, get_job
 
 router = APIRouter()
 
@@ -31,6 +31,14 @@ async def rename_job(request: Request, job_id: str):
 @router.post("/cancel/{job_id}")
 async def cancel_job(request: Request, job_id: str):
     return await CancelJob(request=request, job_id=job_id).run()
+
+@router.post("/options/{job_id}")
+async def job_options(request: Request, job_id: str):
+    return await JobOptions(request=request, job_id=job_id).run()
+
+@router.post("/interrupt/{job_id}")
+async def interrupt_job(request: Request, job_id: str):
+    return await InterruptJob(request=request, job_id=job_id).run()
 
 @router.post("/delete/{job_id}")
 async def delete_job(request: Request, job_id: str):

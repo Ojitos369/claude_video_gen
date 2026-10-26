@@ -3,6 +3,7 @@ import { api, fmtSize } from '../api.js'
 import { Upload, X, Send, FileText, Film } from './Icons.jsx'
 import ModelSelect from './ModelSelect.jsx'
 import AspectSelect from './AspectSelect.jsx'
+import ToolToggles from './ToolToggles.jsx'
 
 const EXAMPLES = [
   'Video con la letra sincronizada de esta canción, escenas que sigan la letra, formato 9:16.',
@@ -44,7 +45,6 @@ export default function NewJob({ status, settings, onCreated }) {
   const [aspectText, setAspectText] = useState('')
   const [tools, setTools] = useState(null)                 // null = defaults from the settings
   const gen = tools || settings?.generation || { images: true, tts: false, music: false }
-  const imgProv = settings?.images?.provider || 'none', ttsProv = settings?.tts?.provider || 'none', musProv = settings?.music?.provider || 'none'
   const [aspectAuto, setAspectAuto] = useState(true)   // follows the uploaded video until the user picks one
   const [dims, setDims] = useState({})                 // file key -> {w, h}
   const key = (f) => `${f.name}:${f.size}`
@@ -154,26 +154,7 @@ export default function NewJob({ status, settings, onCreated }) {
             placeholder="p. ej. que se vea en un monitor curvo de 72 pulgadas · pantalla vertical de un kiosko · historia de Instagram" />
         </label>
       )}
-      <fieldset className="tools">
-        <legend>Herramientas que Claude puede usar</legend>
-        {[['images', 'Generar imágenes', imgProv, settings?.catalog?.images], ['tts', 'Generar voz', ttsProv, settings?.catalog?.tts], ['music', 'Generar música', musProv, settings?.catalog?.music], ['models', 'Generar modelos 3D', settings?.blender?.found ? 'blender' : 'none', { blender: { label: 'Blender' } }]].map(([k, label, prov, cat]) => (
-          <label key={k} className={`toggle ${prov === 'none' ? 'is-disabled' : ''}`}>
-            <input type="checkbox" checked={!!gen[k] && prov !== 'none'} disabled={busy || prov === 'none'}
-              onChange={(e) => setTools({ ...gen, [k]: e.target.checked })} />
-            <span className="toggle-ui" aria-hidden="true" />
-            <span className="toggle-text"><span>{label}</span>
-              <small className="muted">{prov === 'none' ? <>sin proveedor · <a href="#/settings">configurar</a></> : cat?.[prov]?.label}</small></span>
-          </label>
-        ))}
-        {(
-          <label className="toggle">
-            <input type="checkbox" checked={!!gen.ask} disabled={busy} onChange={(e) => setTools({ ...gen, ask: e.target.checked })} />
-            <span className="toggle-ui" aria-hidden="true" />
-            <span className="toggle-text"><span>Hacer preguntas antes de producir</span>
-              <small className="muted">{gen.ask ? 'Claude puede pedirte estilo y detalles (opción múltiple o respuesta propia)' : 'Decide solo, sin preguntas'}</small></span>
-          </label>
-        )}
-      </fieldset>
+      <ToolToggles settings={settings} value={gen} disabled={busy} onChange={setTools} />
       <div className="form-actions">
         <button className="btn btn-primary btn-lg" type="submit" disabled={!ready}>
           <Send /> {busy ? (progress < 1 ? `Subiendo ${Math.round(progress * 100)}%` : 'Creando…') : 'Crear video'}

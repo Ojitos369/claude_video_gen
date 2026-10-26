@@ -67,8 +67,9 @@ class JobMessage(AsyncApi):
         if not text and not uploads:
             raise MYE("Mensaje vacío")
         if job.meta().get("status") in ("running", "queued"):
-            raise MYE("El trabajo sigue en proceso; espera a que termine o cancélalo")
-        await runner.follow_up(job, text, self.data.get("model"), self.data.get("effort"), uploads)
+            await runner.message(job, text, uploads)     # complements the request while it keeps working
+        else:
+            await runner.follow_up(job, text, self.data.get("model"), self.data.get("effort"), uploads)
         self.response = {"job": job.summary()}
 
 
@@ -87,6 +88,23 @@ class CancelJob(AsyncApi):
     async def main(self):
         job = get_job(self.data["job_id"])
         await runner.cancel(job)
+        self.response = {"job": job.summary()}
+
+
+class JobOptions(AsyncApi):
+    """JSON {tools: {images, tts, music, models, ask}, model, effort}: project options, from the next run."""
+    async def main(self):
+        job = get_job(self.data["job_id"])
+        await runner.set_options(job, self.data.get("tools"), self.data.get("model"), self.data.get("effort"))
+        self.response = {"job": job.detail()}
+
+
+class InterruptJob(AsyncApi):
+    async def main(self):
+        job = get_job(self.data["job_id"])
+        if job.meta().get("status") not in ("running", "queued"):
+            raise MYE("El trabajo no está en proceso")
+        await runner.interrupt(job)
         self.response = {"job": job.summary()}
 
 

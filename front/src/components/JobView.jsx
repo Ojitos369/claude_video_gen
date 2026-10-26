@@ -5,12 +5,13 @@ import Questions from './Questions.jsx'
 import Results from './Results.jsx'
 import Markdown from './Markdown.jsx'
 import StatusBadge from './StatusBadge.jsx'
-import { Send, Stop, Trash, Film, FileText, List, Pencil, Check, X, Clip, Upload } from './Icons.jsx'
+import { Send, Stop, Pause, Trash, Film, FileText, List, Pencil, Check, X, Clip, Upload, Gear } from './Icons.jsx'
+import ToolToggles from './ToolToggles.jsx'
 import ModelSelect, { modelLabel } from './ModelSelect.jsx'
 
 const ACTIVE = ['running', 'queued']
 
-export default function JobView({ id, models, efforts, onDeleted }) {
+export default function JobView({ id, settings, models, efforts, onDeleted }) {
   const [job, setJob] = useState(null)
   const [events, setEvents] = useState([])
   const [progress, setProgress] = useState('')
@@ -29,6 +30,7 @@ export default function JobView({ id, models, efforts, onDeleted }) {
   const [model, setModel] = useState('')
   const [effort, setEffort] = useState('')
   const [editing, setEditing] = useState(false)
+  const [showOpts, setShowOpts] = useState(false)
   const [newName, setNewName] = useState('')
   const [error, setError] = useState('')
   const [now, setNow] = useState(Date.now())
@@ -83,13 +85,13 @@ export default function JobView({ id, models, efforts, onDeleted }) {
   const elapsed = started ? (now / 1000 - started) : null
   const totalMs = runs.reduce((s, r) => s + (r.duration_ms || 0), 0)
 
-  const canSend = !running && sending === null && (text.trim() || files.length)
+  const canSend = sending === null && (text.trim() || files.length)
   const send = async (e) => {
     e.preventDefault()
     if (!canSend) return
     setError(''); setSending(0)
     try {
-      await api.message(id, { text: text.trim(), model: model || job.model, effort: effort || job.effort, files }, setSending)
+      await api.message(id, running ? { text: text.trim(), files } : { text: text.trim(), model: model || job.model, effort: effort || job.effort, files }, setSending)
       setText(''); setFiles([]); reload()
     } catch (err) { setError(err.message) } finally { setSending(null) }
   }
@@ -99,7 +101,15 @@ export default function JobView({ id, models, efforts, onDeleted }) {
     if (!n || n === job.name) { setEditing(false); return }
     try { await api.rename(id, n); setJob((j) => ({ ...j, name: n })); setEditing(false) } catch (err) { setError(err.message) }
   }
-  const cancel = async () => { try { await api.cancel(id); reload() } catch (err) { setError(err.message) } }
+  const cancel = async () => {
+    if (!window.confirm('¿Cancelar el trabajo? Se descartan los mensajes que Claude aún no recibió.')) return
+    try { await api.cancel(id); reload() } catch (err) { setError(err.message) }
+  }
+  const saveOptions = async (opts) => {   // saved on every change; the composer selects follow the job again
+    setError('')
+    try { const j = await api.options(id, opts); setJob(j); setModel(''); setEffort('') } catch (err) { setError(err.message) }
+  }
+  const interrupt = async () => { try { await api.interrupt(id); reload() } catch (err) { setError(err.message) } }
   const remove = async () => {
     if (!window.confirm(`¿Borrar el proyecto "${job.name}" y todos sus archivos?`)) return
     try { await api.remove(id); onDeleted() } catch (err) { setError(err.message) }
@@ -136,11 +146,23 @@ export default function JobView({ id, models, efforts, onDeleted }) {
           </div>
         </div>
         <div className="job-actions">
+          <button className={`btn btn-ghost ${showOpts ? 'is-active' : ''}`} aria-expanded={showOpts} onClick={() => setShowOpts((v) => !v)}><Gear /> Opciones</button>
+          {job.status === 'running' && <button className="btn btn-ghost" onClick={interrupt} title="Detiene a Claude; luego puedes continuar o pedir cambios en la misma sesión"><Pause /> Interrumpir</button>}
           {running && <button className="btn btn-ghost" onClick={cancel}><Stop /> Cancelar</button>}
           {!running && <button className="btn btn-ghost btn-danger" onClick={remove}><Trash /> Borrar</button>}
         </div>
       </header>
 
+      {showOpts && (
+        <div className="job-options">
+          <div className="form-row">
+            <ModelSelect models={models} value={job.model} onChange={(v) => saveOptions({ model: v })} />
+            <ModelSelect models={efforts} value={job.effort} onChange={(v) => saveOptions({ effort: v })} label="Esfuerzo" aria="Esfuerzo de Claude" />
+          </div>
+          <ToolToggles settings={settings} value={job.tools || {}} onChange={(t) => saveOptions({ tools: t })} />
+          <p className="hint muted">Se guardan al cambiarlas y valen desde el siguiente pedido{running ? '; los permisos de herramientas también se le avisan a Claude ahora mismo' : ''}.</p>
+        </div>
+      )}
       {running && (
         <div className="live-step">
           <span className="spinner" />
@@ -158,10 +180,10 @@ export default function JobView({ id, models, efforts, onDeleted }) {
       </nav>
       <div className="job-grid" data-m={mtab}>
         <section className="panel panel-feed"
-          onDragEnter={(e) => { if (running) return; e.preventDefault(); depth.current++; setDrag(true) }}
-          onDragOver={(e) => !running && e.preventDefault()}
+          onDragEnter={(e) => { e.preventDefault(); depth.current++; setDrag(true) }}
+          onDragOver={(e) => e.preventDefault()}
           onDragLeave={() => { depth.current = Math.max(0, depth.current - 1); if (!depth.current) setDrag(false) }}
-          onDrop={(e) => { if (running) return; e.preventDefault(); depth.current = 0; setDrag(false); addFiles(e.dataTransfer.files) }}>
+          onDrop={(e) => { e.preventDefault(); depth.current = 0; setDrag(false); addFiles(e.dataTransfer.files) }}>
           {drag && <div className="drop-overlay"><Upload /> Suelta para agregar al proyecto</div>}
           <div className="panel-head"><h2>Proceso</h2><span className="muted">{items.filter((i) => i.type === 'tool').length} pasos</span></div>
           <div className="feed" ref={scroller} onScroll={(e) => {
@@ -195,9 +217,9 @@ export default function JobView({ id, models, efforts, onDeleted }) {
             {sending !== null && files.length > 0 && <div className="upload-bar"><i style={{ width: `${Math.round(sending * 100)}%` }} /></div>}
             <input ref={picker} type="file" multiple hidden onChange={(e) => { addFiles(e.target.files); e.target.value = '' }} />
             <button type="button" className="icon-btn composer-attach" aria-label="Agregar archivos" title="Agregar archivos al proyecto"
-              disabled={running || sending !== null} onClick={() => picker.current?.click()}><Clip /></button>
-            <textarea value={text} onChange={(e) => setText(e.target.value)} rows={2} disabled={running}
-              placeholder={running ? 'Espera a que termine para pedir cambios…' : 'Pide cambios o agrega archivos (Claude conserva el contexto del proyecto)…'}
+              disabled={sending !== null} onClick={() => picker.current?.click()}><Clip /></button>
+            <textarea value={text} onChange={(e) => setText(e.target.value)} rows={2}
+              placeholder={running ? 'Complementa el pedido mientras trabaja (Claude lo recibe en su siguiente paso)…' : 'Pide cambios o agrega archivos (Claude conserva el contexto del proyecto)…'}
               onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) send(e) }} />
             <div className="composer-side">
               <ModelSelect compact models={models} value={model || job.model} onChange={setModel} disabled={running} />

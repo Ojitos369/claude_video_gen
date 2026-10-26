@@ -70,7 +70,7 @@ export default function Timeline({ items, live, models, efforts }) {
           case 'user': return (
             <li key={key} className="tl tl-user">
               <span className="tl-icon"><User /></span>
-              <div className="tl-content"><div className="tl-label">Tú · {time(it.t)}{it.model ? ` · ${modelLabel(models, it.model)}` : ''}{it.effort ? ` · esfuerzo ${modelLabel(efforts, it.effort).toLowerCase()}` : ''}</div><p className="pre">{it.text}</p>
+              <div className="tl-content"><div className="tl-label">Tú · {time(it.t)}{it.live ? ' · durante el trabajo' : ''}{it.model ? ` · ${modelLabel(models, it.model)}` : ''}{it.effort ? ` · esfuerzo ${modelLabel(efforts, it.effort).toLowerCase()}` : ''}</div><p className="pre">{it.text}</p>
                 {it.files?.length > 0 && <div className="tl-files">{it.files.map((f) => <span key={f} className="pill">{f}</span>)}</div>}</div>
             </li>)
           case 'text': return (

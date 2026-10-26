@@ -21,6 +21,9 @@ export const api = {
   rename: (id, name) =>
     fetch(`/api/jobs/rename/${id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) }).then(json),
   cancel: (id) => fetch(`/api/jobs/cancel/${id}`, { method: 'POST' }).then(json),
+  options: (id, opts) =>
+    fetch(`/api/jobs/options/${id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(opts) }).then(json).then((d) => d.job),
+  interrupt: (id) => fetch(`/api/jobs/interrupt/${id}`, { method: 'POST' }).then(json),
   remove: (id) => fetch(`/api/jobs/delete/${id}`, { method: 'POST' }).then(json),
   fileUrl: (id, path) => `/api/jobs/file/${id}/${path.split('/').map(encodeURIComponent).join('/')}`,
 

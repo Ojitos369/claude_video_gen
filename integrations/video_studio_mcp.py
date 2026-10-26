@@ -176,7 +176,7 @@ TOOLS = {
     "video_studio_result": (result, "Rutas de los entregables (video .mp4, .html, modelos) y el mensaje final de Claude, con preguntas pendientes si las hay. "
         "copy_to copia los archivos a esa carpeta (p. ej. el proyecto actual) y devuelve las nuevas rutas.",
         S(job_id=STR, copy_to=STR) | {"required": ["job_id"]}),
-    "video_studio_reply": (reply, "Envía un pedido de cambios, o las respuestas a las `questions` pendientes (answers: {id: opción elegida | lista | texto propio}), a un trabajo terminado (misma sesión).",
+    "video_studio_reply": (reply, "Envía un pedido de cambios, o las respuestas a las `questions` pendientes (answers: {id: opción elegida | lista | texto propio}), a un trabajo terminado (misma sesión); si sigue en curso, el texto lo complementa sin detenerlo.",
         S(job_id=STR, text=STR, answers={"type": "object"}, files={"type": "array", "items": STR}) | {"required": ["job_id"]}),
     "video_studio_list": (list_jobs, "Lista los trabajos recientes de Video Studio.", S(limit=INT)),
     "video_studio_cancel": (cancel, "Cancela un trabajo en curso.", S(job_id=STR) | {"required": ["job_id"]}),
