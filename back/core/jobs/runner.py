@@ -50,7 +50,12 @@ def context_prompt(job_id, tools):
         out.append(f"Herramienta de imágenes disponible ({prov}, modelo {img['model'] or 'por defecto'}, máximo {img['max_per_project']} por proyecto): "
                    f"`{py} engine/tools/gen_image.py {job_id} \"<prompt detallado>\" --out assets/<nombre>.png [--aspect 9:16] [--transparent] [--ref <imagen>]`. "
                    "Úsala solo cuando una imagen mejore claramente el video (fondos, personajes, objetos, portadas, texturas), con la paleta y "
-                   "el estilo del proyecto; revisa cada imagen antes de usarla y anota en PROGRESO.md qué generaste y para qué.")
+                   "el estilo del proyecto; revisa cada imagen antes de usarla y anota en PROGRESO.md qué generaste y para qué. "
+                   "Una sola imagen puede traer varios personajes u objetos a la vez (hoja de assets separados, con espacio entre ellos): "
+                   "ahorra cupo y mantiene el estilo; con --transparent (OpenAI) o un fondo plano de un color (Gemini, luego `cutout()` de "
+                   "engine/scenes/base.py) se recortan en PNG individuales (componentes conexos del alfa o una cuadrícula). "
+                   "También sirve para spritesheets: cuadros de una animación (caminar, saltar, explotar…) en cuadrícula uniforme, mismo "
+                   "personaje y escala en cada celda; córtalos y anímalos en las escenas o como GIF/overlay que complemente el video.")
     elif tools.get("images"):
         out.append("La generación de imágenes está permitida, pero no hay proveedor configurado en los ajustes: no la uses.")
     else:
