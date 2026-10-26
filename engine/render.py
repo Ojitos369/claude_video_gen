@@ -104,6 +104,7 @@ def pause_amount(t):
     return 0.0
 
 TRANS = CFG.get("transitions")
+RESAMPLE = Image.NEAREST if CFG["scene_resample"] == "nearest" else Image.BILINEAR   # nearest: crisp pixel art
 TR_DUR = 0.3
 def _zoom(a, z):
     """Zoom a float image about its centre (z > 1 enlarges)."""
@@ -113,6 +114,7 @@ def _zoom(a, z):
 def transition(kind, a, b, u, ci):
     """Blend the previous scene a into the new one b, u = 0..1 over TR_DUR. Each style is an attention-grabbing pattern interrupt."""
     e = 1 - (1 - u) ** 3
+    if kind == "cut": return b
     if kind == "flash":
         k = min(1.0, u * 4)
         return (a * (1 - k) + b * k) + (255 - b) * 0.85 * (1 - u) ** 2
@@ -165,7 +167,7 @@ def background(t, voff=0, compose=True):
     elif ci > 0 and not TRANS and lt < 0.2:
         k = lt / 0.2
         img = draw_cut(ci - 1, t, voff) * (1 - k) + img * k                         # soft cross-dissolve
-    img = img * VIG
+    if CFG["vignette"]: img = img * VIG
     if CFG["beat_fx"]:
         sh = int(round(3 * pulse(t) ** 1.5))
         if sh: img = img.copy(); img[..., 0] = np.roll(img[..., 0], sh, 1); img[..., 2] = np.roll(img[..., 2], -sh, 1)
@@ -179,11 +181,12 @@ def background(t, voff=0, compose=True):
     p = pulse(t)
     z = 1.05 + (0.035 if kind == "chorus" else 0.015) * p + 0.02 * math.sin(lt * 0.9 + cut["v"]) + zoom_punch
     drift = (cut["v"] % 3 - 1) * 8 * lt / 2
+    if not CFG["camera_motion"]: z, drift = 1.0, 0.0     # scenes move their own camera (e.g. pixel art: exact integer upscale)
     w, h = BW / z, BH / z
     x0, y0 = (BW - w) / 2 + drift, (BH - h) / 2 + 6 * math.sin(lt)
     x0 = min(max(0, x0), BW - w); y0 = min(max(0, y0), BH - h)
     if VERTICAL:
-        return im.resize((W, H), Image.BILINEAR, box=(x0, y0, x0 + w, y0 + h))
+        return im.resize((W, H), RESAMPLE, box=(x0, y0, x0 + w, y0 + h))
     if not compose: return im.resize((int(BW * min(W / BW, H / BH)), int(BH * min(W / BW, H / BH))), Image.BILINEAR, box=(x0, y0, x0 + w, y0 + h))
     fh = H; fw = int(fh * BW / BH)
     if fw > W: fw = W; fh = int(fw * BH / BW)
@@ -196,7 +199,7 @@ def background(t, voff=0, compose=True):
         for k, x in ((1, (W - fw) // 2 - fw - gap), (2, (W + fw) // 2 + gap)):
             side = background(t, k, False).resize((fw, fh))
             out.paste(Image.eval(side, lambda c: int(c * 0.6)), (x, (H - fh) // 2))
-    out.paste(im.resize((fw, fh), Image.BILINEAR, box=(x0, y0, x0 + w, y0 + h)), ((W - fw) // 2, (H - fh) // 2))
+    out.paste(im.resize((fw, fh), RESAMPLE, box=(x0, y0, x0 + w, y0 + h)), ((W - fw) // 2, (H - fh) // 2))
     return out
 
 # ---------------------------------------------------------------- lyrics

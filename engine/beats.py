@@ -8,6 +8,17 @@ y, sr = librosa.load(pr.p(pr.cfg["beats_audio"]) if pr.cfg["beats_audio"] else p
 dur = len(y) / sr
 tempo, beats = librosa.beat.beat_track(y=y, sr=sr, units="time", tightness=120)
 tempo = float(np.atleast_1d(tempo)[0])
+# the tracker sometimes stops early (dense final chorus): extend the grid with the median period up to the end of the sound,
+# phase fitted to the onset envelope
+_ons = librosa.onset.onset_strength(y=y, sr=sr); _ot = librosa.times_like(_ons, sr=sr)
+_rms = librosa.feature.rms(y=y)[0]; _loud = librosa.times_like(_rms, sr=sr)[_rms > 0.05 * _rms.max()]
+_per = float(np.median(np.diff(beats))) if len(beats) > 2 else 60 / max(tempo, 1)
+if len(_loud) and _loud[-1] - beats[-1] > 2 * _per:
+    ext = np.arange(beats[-1] + _per, _loud[-1], _per)
+    offs = np.linspace(-0.25 * _per, 0.25 * _per, 21)
+    best = offs[int(np.argmax([np.interp(ext + o, _ot, _ons).sum() for o in offs]))]
+    beats = np.concatenate([beats, ext + best])
+    print(f"beat grid extended {len(ext)} beats to {beats[-1]:.2f}s (offset {best:+.3f})")
 # downbeats: pick the beat phase (of 4) with the strongest low-frequency onset
 S = np.abs(librosa.stft(y)); low = librosa.onset.onset_strength(S=librosa.amplitude_to_db(S[:40]), sr=sr)
 lt = librosa.times_like(low, sr=sr)

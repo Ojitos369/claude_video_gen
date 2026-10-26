@@ -22,7 +22,7 @@ DEFAULTS = {
     "palette": {},                 # overrides named scene colors, e.g. {"rose": [255, 90, 160]}
     "fade_out": 4.0,               # seconds of fade to black before the end (0 = off)
     "background": {"type": "scenes"},   # or {"type": "video", "source": "clip.mp4", "dim": 0.55}: source video under a black cover, no scenes
-    "transitions": None,           # None (soft cross-dissolve) or a list cycled per cut: flash glitch slide zoom iris whip bars
+    "transitions": None,           # None (soft cross-dissolve) or a list cycled per cut: flash glitch slide zoom iris whip bars cut (straight cut)
     "beat_fx": False,              # chromatic split + extra punch on beats
     "text_anim": "pop",            # pop | dynamic (each line enters with slam / rise / spin / drop and leaves zooming)
     "text_pulse": True,            # lyrics scale slightly on beats
@@ -31,6 +31,9 @@ DEFAULTS = {
     "voice": None,                 # separate clean voice/narration file: used instead of Demucs vocals for transcription/alignment
     "beats_audio": None,           # file analysed by beats.py (default: the project audio), e.g. a music bed
     "wide_panels": False,          # wide output with vertical scenes: True (or gap px) adds side panels with the same cut in other variants
+    "scene_resample": "bilinear",  # upscale of the scene canvas to the output: bilinear | nearest (crisp pixel art, e.g. canvas [640, 360] -> 1920x1080)
+    "camera_motion": True,         # automatic slow zoom/drift/punch of scenes; False when the scenes move their own camera
+    "vignette": True,
     "scene_canvas": None,          # [w, h] design canvas of scenes (default [540, 960]); use [540, 540] for 1:1 projects
     "segment_seconds": 10, "jobs": None,          # None: machine.render_jobs from settings.local.json
     "nvenc_cq": 19, "audio_bitrate": "320k",

@@ -196,7 +196,7 @@ python engine/voxel/build.py mi_tema --jobs 2        # config: "background": {"t
 - **Letra / subtítulos**: `lyrics_mode` (auto | orig | orig+es | orig+rom+es), `caption_position` (center | bottom), `text_size`,
   `text_pulse`, `text_colors`, `font_bold` / `font_regular` / `font_index` (NotoSansCJK: 0 JP, 1 KR, 2 SC, 3 TC).
 - **Render**: `fade_out`, `segment_seconds`, `jobs` (default: `machine.render_jobs`), `nvenc_cq` (calidad), `whisper_model`, `output`,
-  `scene_canvas` (lienzo de las escenas 2D, p. ej. [540, 540] para 1:1). `wide_panels: true` (salida horizontal con escenas verticales): paneles laterales con el mismo corte en otras variantes, atenuados, en vez de solo el fondo desenfocado. El codificador sale de `machine.video_encoder`.
+  `scene_canvas` (lienzo de las escenas 2D, p. ej. [540, 540] para 1:1). `wide_panels: true` (salida horizontal con escenas verticales): paneles laterales con el mismo corte en otras variantes, atenuados, en vez de solo el fondo desenfocado. Pixel art: `scene_resample: "nearest"` (escalado nítido, p. ej. lienzo [640, 360] -> 1920x1080), `camera_motion: false` (sin zoom/deriva automáticos: las escenas mueven su propia cámara), `vignette: false`; transición `"cut"` (corte seco) en `transitions`. `beats.py` extiende la rejilla de beats hasta el final del sonido si el seguidor se corta antes. El codificador sale de `machine.video_encoder`.
 
 ## Escenas 2D
 - `sc_<nombre>(t, lt, v, p, e, bt, blk)` devuelve un array RGB de 540x960 (lienzo vertical): `t` tiempo, `lt` tiempo en el corte,
