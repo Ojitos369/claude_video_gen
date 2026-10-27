@@ -60,6 +60,7 @@ def block_start(b):
     else: t = LINES[b["line"]]["start"] - 0.15
     return max(0.0, t + b.get("offset", 0))
 
+TR_DUR = 0.3      # default transition length (s); a block can set "tr_dur"
 def build_cuts():
     blocks = SB["blocks"]
     bst = [block_start(b) for b in blocks]
@@ -70,7 +71,11 @@ def build_cuts():
         t, end, v = starts[i], starts[i + 1], 0
         while True:
             hard = v == 0 and t > 0 and round(bst[i], 1) in sec_starts and section_at(bst[i])["kind"] in ("chorus", "pre", "verse", "outro")
-            cuts.append({"t": t, "motif": b["motif"], "v": v, "hard": hard, "bstart": starts[i], "blk": b})
+            if v == 0 and "hard" in b: hard = bool(b["hard"]) and t > 0
+            # per-block transitions (optional): "transition" for the block's first cut, "transitions" cycled for its inner cuts
+            tr = b.get("transition") if v == 0 else (b["transitions"][(v - 1) % len(b["transitions"])] if b.get("transitions") else None)
+            cuts.append({"t": t, "motif": b["motif"], "v": v + b.get("v0", 0), "hard": hard, "bstart": starts[i], "blk": b, "tr": tr,
+                         "tr_dur": b.get("tr_dur", TR_DUR)})
             nxt = t + b.get("cut_every", 2.0)
             d = snap(nxt, downs)
             nxt = d if abs(d - nxt) <= 0.45 else snap(nxt, beats)
@@ -105,7 +110,6 @@ def pause_amount(t):
 
 TRANS = CFG.get("transitions")
 RESAMPLE = Image.NEAREST if CFG["scene_resample"] == "nearest" else Image.BILINEAR   # nearest: crisp pixel art
-TR_DUR = 0.3
 def _zoom(a, z):
     """Zoom a float image about its centre (z > 1 enlarges)."""
     im = Image.fromarray(np.clip(a, 0, 255).astype(np.uint8)); w, h = BW / z, BH / z
@@ -115,6 +119,10 @@ def transition(kind, a, b, u, ci):
     """Blend the previous scene a into the new one b, u = 0..1 over TR_DUR. Each style is an attention-grabbing pattern interrupt."""
     e = 1 - (1 - u) ** 3
     if kind == "cut": return b
+    if kind in ("dipwhite", "dipblack"):     # through warm white / black: first half fades out a, second half fades in b
+        c = np.array([255, 238, 205], np.float32) if kind == "dipwhite" else np.zeros(3, np.float32)
+        k = 1 - abs(2 * u - 1)
+        return (a if u < 0.5 else b) * (1 - k) + c * k
     if kind == "flash":
         k = min(1.0, u * 4)
         return (a * (1 - k) + b * k) + (255 - b) * 0.85 * (1 - u) ** 2
@@ -127,6 +135,9 @@ def transition(kind, a, b, u, ci):
             y0 = int(r.integers(0, BH - 40)); hh = int(r.integers(8, 50)); dx = int(r.integers(-60, 60) * (1 - u))
             out[y0:y0 + hh] = np.roll(out[y0:y0 + hh], dx, 1)
         return out
+    if kind == "push":       # the new scene always enters from the right (follows a character walking right)
+        off = int(BW * e)
+        return np.concatenate([a, b], 1)[:, off:off + BW]
     if kind == "slide":
         off = int(BW * e)
         if ci % 2: return np.concatenate([a, b], 1)[:, off:off + BW]
@@ -162,6 +173,8 @@ def background(t, voff=0, compose=True):
     if cut["hard"]:
         zoom_punch = 0.14 * math.exp(-lt / 0.25)
         img = img + (255 - img) * (0.6 * math.exp(-lt / 0.12))            # flash
+    elif ci > 0 and cut.get("tr") and lt < cut["tr_dur"]:
+        img = transition(cut["tr"], draw_cut(ci - 1, t, voff), img, lt / cut["tr_dur"], ci)
     elif ci > 0 and TRANS and lt < TR_DUR:
         img = transition(TRANS[ci % len(TRANS)], draw_cut(ci - 1, t, voff), img, lt / TR_DUR, ci)
     elif ci > 0 and not TRANS and lt < 0.2:

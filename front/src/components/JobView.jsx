@@ -155,7 +155,7 @@ export default function JobView({ id, settings, models, efforts, onDeleted }) {
 
       {showOpts && (
         <div className="job-options">
-          <div className="form-row">
+          <div className="opts-row">
             <ModelSelect models={models} value={job.model} onChange={(v) => saveOptions({ model: v })} />
             <ModelSelect models={efforts} value={job.effort} onChange={(v) => saveOptions({ effort: v })} label="Esfuerzo" aria="Esfuerzo de Claude" />
           </div>

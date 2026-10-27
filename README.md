@@ -75,14 +75,14 @@ servidor solo escucha en 127.0.0.1), `WORKSPACE_DIR`.
 - **Resultado**: reproductor (prefiere el video final sobre las vistas previas), descargas y archivos del proyecto.
 - **Cambios**: el cuadro de abajo continúa la misma sesión de Claude (`--resume`) y acepta archivos nuevos (clip o arrastrar al
   panel); se guardan en la carpeta del proyecto sin pisar los existentes (`nombre-2.ext`) y cada pedido se añade a `solicitud.md`.
-  Si la sesión ya no se puede retomar, se abre una nueva que primero lee `solicitud.md`, `prompt.md` y `PROGRESO.md`. Un trabajo en curso se puede interrumpir (queda listo para continuar en la misma sesión) o cancelar, y se le pueden mandar mensajes (y archivos) que lo complementan sin detenerlo: van a `.app/inbox.jsonl` y Claude los recibe tras su siguiente herramienta o antes de terminar (hooks `PostToolUse`/`Stop` de `back/core/jobs/inbox_hook.py`, pasados con `--settings`); los que no alcanzan a llegar entran en el siguiente pedido. Se puede borrar un trabajo terminado.
+  Si la sesión ya no se puede retomar, se abre una nueva que primero lee `solicitud.md`, `prompt.md` y `PROGRESO.md`. Un trabajo en curso se puede interrumpir (queda listo para continuar en la misma sesión) o cancelar, y se le pueden mandar mensajes (y archivos) que lo complementan sin detenerlo: van a `.app/inbox.jsonl` y Claude los recibe tras su siguiente herramienta o antes de terminar (hooks `PostToolUse`/`Stop` de `back/core/jobs/inbox_hook.py`, pasados con `--settings`); los que no alcanzan a llegar entran en el siguiente pedido. Se puede borrar un trabajo terminado. Las opciones del proyecto (herramientas de generación, preguntas, modelo y esfuerzo) se cambian en cualquier momento desde "Opciones": valen desde el siguiente pedido y, si está trabajando, el cambio de permisos se le avisa por el buzón.
 - **Renombrar**: lápiz junto al título. Cambia el nombre visible; la carpeta `projects/<id>/` no cambia (la sesión de Claude usa esa ruta).
 - Claude corre desacoplado del servidor (su salida va a `projects/<id>/.app/run-N.jsonl`): reiniciar el servidor no corta un
   trabajo, se retoma al arrancar. Los proyectos creados desde la terminal aparecen en la lista y también se pueden continuar.
 
 API: `GET /api/jobs/list`, `POST /api/jobs/create` (multipart: `prompt`, `name`, `model`, `effort`, `aspect`, `aspect_text`, `tools`, `files[]`),
 `GET /api/jobs/detail/<id>`, `GET /api/jobs/events/<id>?since=N`, `POST /api/jobs/message/<id>` (JSON `text`, `model`, `effort`, o multipart con los mismos campos + `files[]`),
-`POST /api/jobs/rename/<id>` (`name`), `POST /api/jobs/cancel/<id>`, `POST /api/jobs/interrupt/<id>`, `POST /api/jobs/delete/<id>`, `GET /api/jobs/file/<id>/<ruta>`, `GET /api/base/status`,
+`POST /api/jobs/rename/<id>` (`name`), `POST /api/jobs/cancel/<id>`, `POST /api/jobs/interrupt/<id>`, `POST /api/jobs/options/<id>` (`tools`, `model`, `effort`), `POST /api/jobs/delete/<id>`, `GET /api/jobs/file/<id>/<ruta>`, `GET /api/base/status`,
 `GET /api/settings/get`, `POST /api/settings/save`, `POST /api/settings/test/<plataforma>`, `POST /api/settings/codex_login`,
 `POST /api/settings/machine`, websockets `/api/ws/jobs/<id>` (eventos de un trabajo) y `/api/ws/jobs/all` (estado de todos).
 
@@ -142,6 +142,8 @@ python engine/transcribe.py mi_cancion --windows 0 200       # pasada extra por 
 python engine/align.py mi_cancion
 python engine/beats.py mi_cancion
 #   -> storyboard.json: sections [{start, kind}], blocks [{start, motif, cut_every?}]
+#      por bloque (opcional): transition (primer corte), transitions (cortes internos), tr_dur, hard (destello de sección), v0
+#      transiciones: flash glitch slide push zoom iris whip bars cut dipwhite dipblack (otro nombre = fundido)
 #   fondo de video: "background": {"type": "video", "source": "clip.mp4", "dim": 0.6}
 ```
 
