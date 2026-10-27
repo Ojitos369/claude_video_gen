@@ -55,8 +55,12 @@ def context_prompt(job_id, tools):
                    "Una sola imagen puede traer varios personajes u objetos a la vez (hoja de assets separados, con espacio entre ellos): "
                    "ahorra cupo y mantiene el estilo; con --transparent (OpenAI) o un fondo plano de un color (Gemini, luego `cutout()` de "
                    "engine/scenes/base.py) se recortan en PNG individuales (componentes conexos del alfa o una cuadrícula). "
-                   "También sirve para spritesheets: cuadros de una animación (caminar, saltar, explotar…) en cuadrícula uniforme, mismo "
-                   "personaje y escala en cada celda; córtalos y anímalos en las escenas o como GIF/overlay que complemente el video.")
+                   "Para cualquier animación (caminar, saltar, explotar, un gesto, un objeto que gira…) no generes un cuadro por imagen: "
+                   "genera UNA spritesheet con --transparent (pide en el prompt N cuadros de la misma animación en cuadrícula uniforme "
+                   "CxR, mismo personaje, escala y encuadre en cada celda, separados y sin texto) y sepárala con "
+                   f"`{py} engine/tools/split_sheet.py {job_id} assets/<hoja>.png --grid CxR [--gif assets/<nombre>.gif --fps 12]` "
+                   "(cuadros PNG alineados en assets/sprites/<hoja>/; sin --grid los detecta por el alfa; si la hoja no trae alfa "
+                   "quita el fondo plano). Usa los cuadros en las escenas o el GIF como overlay que complemente el video.")
     elif tools.get("images"):
         out.append("La generación de imágenes está permitida, pero no hay proveedor configurado en los ajustes: no la uses.")
     else:

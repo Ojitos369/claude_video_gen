@@ -172,6 +172,9 @@ python engine/beats.py mi_expl                      # solo para cortes suaves
 python engine/tools/gen_image.py mi_video "prompt detallado" --out assets/fondo.png --aspect 9:16 [--transparent] [--ref img.png]
 #   una imagen puede traer varios personajes/objetos separados (hoja de assets) o una spritesheet (cuadros de animación en cuadrícula);
 #   con --transparent (OpenAI) o fondo plano + cutout() (Gemini) se recortan en PNG sueltos o en cuadros para animar/GIF
+python engine/tools/split_sheet.py mi_video assets/walk_sheet.png --grid 4x2 [--gif assets/walk.gif --fps 12]
+#   animaciones: una spritesheet con --transparent -> cuadros PNG alineados (abajo-centro) en assets/sprites/<hoja>/ + GIF;
+#   sin --grid detecta los cuadros por el alfa; si la hoja no tiene alfa quita el fondo plano del borde
 python engine/tools/tts.py mi_video --file guion.txt --out audio/narracion.wav [--voice es-MX-JorgeNeural] [--rate -5%]
 python engine/tools/gen_music.py mi_video --style "calm lofi, piano, 80 bpm" --out audio/music.wav --instrumental   # Musicful
 python engine/tools/synth_music.py mi_video --seconds 40 --bpm 120 --out audio/music.wav [--breakdown 16 21]   # fondo instrumental local (sin servicio)
