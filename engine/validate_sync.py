@@ -5,9 +5,9 @@ from common import project_from_argv
 pr = project_from_argv()
 W = []
 for f in glob.glob(pr.p("lyrics", "raw_transcript*.json")):
-    d = json.load(open(f)); segs = d["segments"] if isinstance(d, dict) else d
+    d = json.load(open(f, encoding="utf-8")); segs = d["segments"] if isinstance(d, dict) else d
     W += [(w["s"], w["e"], w["w"]) for s in segs for w in s["words"]]
-L = json.load(open(pr.p("lyrics", "lyrics.json")))["lines"]
+L = json.load(open(pr.p("lyrics", "lyrics.json"), encoding="utf-8"))["lines"]
 for i, l in enumerate(L):
     ds = min(W, key=lambda w: abs(w[0]-l["start"]))
     de = min(W, key=lambda w: abs(w[1]-l["end"]))

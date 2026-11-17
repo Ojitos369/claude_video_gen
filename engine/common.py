@@ -46,7 +46,7 @@ class Project:
         if not os.path.isdir(d): sys.exit(f"project not found: {arg}")
         self.dir, self.name = os.path.abspath(d), os.path.basename(os.path.abspath(d))
         cfg_path = self.p("config.json")
-        user = json.load(open(cfg_path)) if os.path.exists(cfg_path) else {}
+        user = json.load(open(cfg_path, encoding="utf-8")) if os.path.exists(cfg_path) else {}
         self.cfg = {**DEFAULTS, **user, "text_colors": {**DEFAULTS["text_colors"], **user.get("text_colors", {})}}
         if not self.cfg["audio"]:
             aud = sorted(f for f in os.listdir(d) if f.lower().endswith((".mp3", ".wav", ".flac", ".m4a", ".ogg", ".mp4", ".mkv", ".mov", ".webm")))
@@ -59,6 +59,7 @@ class Project:
         self.variant = ""
         if aspect:
             self.cfg.update(aspect=aspect, width=None, height=None); self.variant = aspect.replace(":", "x")
+            self.cfg.update(self.cfg.get("variants", {}).get(aspect, {}))     # config.json "variants": {"16:9": {scene_canvas: [1920, 1080], ...}}
         self._resolve_format()
         for sub in ("audio", "lyrics", "render", "out"): os.makedirs(self.p(sub), exist_ok=True)
 
@@ -135,13 +136,24 @@ def audio_codec(path):
 def project_from_argv():
     """First argument = project. `--aspect 16:9` (any script) renders an alternative format of the same project:
     own render/<16x9>/ folder and out/<name>_16x9.mp4, so the default version is not overwritten."""
+    # Worker processes started with "spawn" (Windows, macOS) re-import the script with the already-trimmed argv:
+    # they take the project/aspect from the environment set by the parent.
+    if (len(sys.argv) < 2 or sys.argv[1].startswith("-")) and os.environ.get("VS_ENGINE_PROJECT"):
+        return Project(os.environ["VS_ENGINE_PROJECT"], os.environ.get("VS_ENGINE_ASPECT") or None)
     if len(sys.argv) < 2 or sys.argv[1].startswith("-"): sys.exit(f"usage: python {os.path.relpath(sys.argv[0])} <project> [options]")
     aspect = None
     if "--aspect" in sys.argv:
         i = sys.argv.index("--aspect"); aspect = sys.argv[i + 1]; del sys.argv[i:i + 2]
-    return Project(sys.argv.pop(1), aspect)
+    name = sys.argv.pop(1)
+    os.environ["VS_ENGINE_PROJECT"], os.environ["VS_ENGINE_ASPECT"] = name, aspect or ""
+    return Project(name, aspect)
 
 def cuda_lib_path():
-    """LD_LIBRARY_PATH entries for cuBLAS/cuDNN wheels (needed by faster-whisper/ctranslate2)."""
-    import nvidia.cublas.lib, nvidia.cudnn.lib
-    return ":".join(os.path.dirname(m.__file__) for m in (nvidia.cublas.lib, nvidia.cudnn.lib))
+    """Library dirs (os.pathsep-joined) of the cuBLAS/cuDNN wheels (needed by faster-whisper/ctranslate2).
+    Linux: .../lib for LD_LIBRARY_PATH; Windows: the DLLs live in .../bin. Empty if the wheels are not installed."""
+    try:
+        import nvidia.cublas, nvidia.cudnn
+    except ImportError:
+        return ""
+    sub = "bin" if os.name == "nt" else "lib"
+    return os.pathsep.join(os.path.join(list(m.__path__)[0], sub) for m in (nvidia.cublas, nvidia.cudnn))

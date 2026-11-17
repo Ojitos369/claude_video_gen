@@ -8,7 +8,7 @@
 import json, re, unicodedata, torch, torchaudio
 from common import project_from_argv
 pr = project_from_argv()
-SRC = json.load(open(pr.p("lyrics", "lyrics_src.json")))
+SRC = json.load(open(pr.p("lyrics", "lyrics_src.json"), encoding="utf-8"))
 src = SRC["lines"]
 dev = "cuda" if torch.cuda.is_available() else "cpu"
 bundle = torchaudio.pipelines.MMS_FA
@@ -61,9 +61,9 @@ for L in src:
                     "es": L.get("es", ""), "words": ws_})
     print(f'{words[0]["s"]:7.2f} {words[-1]["e"]:7.2f}  ' + " ".join(f'{w["w"]}({w["score"]})' for w in words))
 
-json.dump({"language": SRC["language"], "script": SRC.get("script", ""), "lines": out}, open(pr.p("lyrics", "lyrics.json"), "w"), ensure_ascii=False, indent=1)
+json.dump({"language": SRC["language"], "script": SRC.get("script", ""), "lines": out}, open(pr.p("lyrics", "lyrics.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
 f = lambda t: f"{int(t//3600):02d}:{int(t%3600//60):02d}:{int(t%60):02d},{int(t*1000%1000):03d}"
-with open(pr.p("lyrics", "lyrics.srt"), "w") as fh:
+with open(pr.p("lyrics", "lyrics.srt"), "w", encoding="utf-8") as fh:
     for n, L in enumerate(out, 1):
         fh.write(f'{n}\n{f(L["start"])} --> {f(L["end"])}\n{L["text"]}\n' + (f'{L["rom"]}\n' if L["rom"] else "") + (f'{L["es"]}\n' if L["es"] else "") + "\n")
 
@@ -81,7 +81,7 @@ for a_, b_ in zip(out, out[1:]):
         a_["end"] = a_["words"][-1]["e"] = round(b_["start"] - 0.02, 3)
 bad = [(round(l["start"], 2), l["onset_diff"], l["text"]) for l in out if abs(l["onset_diff"]) > 0.15]
 print("lines without vocal onset within 150 ms:", bad)
-json.dump({"language": SRC["language"], "script": SRC.get("script", ""), "lines": out}, open(pr.p("lyrics", "lyrics.json"), "w"), ensure_ascii=False, indent=1)
-with open(pr.p("lyrics", "lyrics.srt"), "w") as fh:
+json.dump({"language": SRC["language"], "script": SRC.get("script", ""), "lines": out}, open(pr.p("lyrics", "lyrics.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+with open(pr.p("lyrics", "lyrics.srt"), "w", encoding="utf-8") as fh:
     for n, L in enumerate(out, 1):
         fh.write(f'{n}\n{f(L["start"])} --> {f(L["end"])}\n{L["text"]}\n' + (f'{L["rom"]}\n' if L["rom"] else "") + (f'{L["es"]}\n' if L["es"] else "") + "\n")

@@ -7,7 +7,12 @@
 import argparse, json, os, sys
 from common import project_from_argv, cuda_lib_path
 pr = project_from_argv()
-if "LD_LIBRARY_PATH" not in os.environ or "cublas" not in os.environ["LD_LIBRARY_PATH"]:
+if os.name == "nt":   # Windows: DLL search path instead of LD_LIBRARY_PATH (no re-exec needed)
+    import importlib.util
+    tl = importlib.util.find_spec("torch")   # torch's own lib/ ships cuBLAS/cuDNN DLLs when the nvidia wheels are absent
+    for d in cuda_lib_path().split(os.pathsep) + ([os.path.join(os.path.dirname(tl.origin), "lib")] if tl else []):
+        if os.path.isdir(d): os.add_dll_directory(d); os.environ["PATH"] = d + os.pathsep + os.environ.get("PATH", "")
+elif "LD_LIBRARY_PATH" not in os.environ or "cublas" not in os.environ["LD_LIBRARY_PATH"]:
     os.environ["LD_LIBRARY_PATH"] = cuda_lib_path() + ":" + os.environ.get("LD_LIBRARY_PATH", "")
     os.execv(sys.executable, [sys.executable] + [sys.argv[0], pr.dir] + sys.argv[1:])   # ctranslate2 reads it at load time
 ap = argparse.ArgumentParser()

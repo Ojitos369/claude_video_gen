@@ -84,7 +84,7 @@ def prep_image(c):
 
 def view(img, z, cx, cy, zmb):
     """Crop of a base image (size = output * zmb) at zoom z centred on (cx, cy) in 0..1 coordinates, resized to the output."""
-    bw, bh = img.size; w, h = bw / z, bh / z
+    bw, bh = img.size; z = max(z, 1.0); w, h = bw / z, bh / z   # z < 1 sacaba la ventana de la imagen
     x0 = min(max(cx * bw - w / 2, 0), bw - w); y0 = min(max(cy * bh - h / 2, 0), bh - h)
     return np.asarray(img.resize((W, H), Image.BILINEAR, box=(x0, y0, x0 + w, y0 + h)))
 
@@ -120,7 +120,7 @@ def blend_rgba(f, rgba, cx, cy, amul=1.0):
     r = np.asarray(rgba)[ya - y0:yb - y0, xa - x0:xb - x0].astype(np.float32); a = r[..., 3:4] / 255 * amul
     f[ya:yb, xa:xb] = f[ya:yb, xa:xb] * (1 - a) + r[..., :3] * a
 
-EMO = ImageFont.truetype("/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf", 109)
+EMO = ImageFont.truetype(next(p for p in ("/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf", r"C:\Windows\Fonts\seguiemj.ttf") if os.path.exists(p)), 109)   # Linux: Noto; Windows: Segoe UI Emoji
 _emo = {}
 def emoji(ch, size):
     size = int(round(size / 8) * 8) or 8
@@ -129,9 +129,13 @@ def emoji(ch, size):
         _emo[(ch, size)] = im.resize((int(136 * size / 128), size), Image.LANCZOS)
     return _emo[(ch, size)]
 
-FONT = "/usr/share/fonts/truetype/ubuntu/UbuntuSans[wdth,wght].ttf"
+FONT = next(p for p in ("/usr/share/fonts/truetype/ubuntu/UbuntuSans[wdth,wght].ttf", r"C:\Windows\Fonts\bahnschrift.ttf") if os.path.exists(p))   # Windows: Bahnschrift (variable)
 def font(sz):
-    f = ImageFont.truetype(FONT, int(sz)); f.set_variation_by_axes([100, 800]); return f
+    f = ImageFont.truetype(FONT, int(sz))
+    try:   # peso máximo, ancho normal (el orden de los ejes cambia según la fuente)
+        f.set_variation_by_axes([a["maximum"] if b"eight" in (a["name"] if isinstance(a["name"], bytes) else str(a["name"]).encode()) else a["default"] for a in f.get_variation_axes()])
+    except Exception: pass
+    return f
 OUTLINE, GLOWC = (38, 8, 70), (170, 80, 255)
 WHITE, LIME, PINK, GOLD = (255, 255, 255), (108, 255, 122), (255, 95, 210), (255, 216, 74)
 _cap = {}

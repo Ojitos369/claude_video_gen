@@ -3,6 +3,7 @@
 #   python engine/render.py <project> --frame 60.2 [..]     -> render/frame_060.20.png (stills for checks)
 #   python engine/render.py <project> --preview 119.5 139.5 -> out/preview.mp4
 #   python engine/render.py <project> [--force]             -> render/seg_*.mp4 (resumable) + out/<output>
+#   python engine/render.py <project> --limit 5             -> at most 5 segments per call; repeat until it muxes the output
 # Inputs (project folder): config.json, storyboard.json, audio/beats.json, lyrics/lyrics.json
 # --force discards cached segments (needed after editing lyrics/storyboard/config/scenes).
 import argparse, json, math, os, subprocess, sys
@@ -22,10 +23,10 @@ VERTICAL = abs(W / H - BW / BH) < 0.01   # other formats: scene centred over a b
 S = min(W, H) / 1080         # text scale relative to the 1080-wide design
 SEG = CFG["segment_seconds"]
 
-BEATS = json.load(open(P("audio/beats.json")))
-LYR = json.load(open(P("lyrics/lyrics.json"))) if os.path.exists(P("lyrics/lyrics.json")) else {"language": None, "lines": []}   # instrumental: no lyrics
+BEATS = json.load(open(P("audio/beats.json"), encoding="utf-8"))
+LYR = json.load(open(P("lyrics/lyrics.json"), encoding="utf-8")) if os.path.exists(P("lyrics/lyrics.json")) else {"language": None, "lines": []}   # instrumental: no lyrics
 LINES = LYR["lines"]
-SB = json.load(open(P("storyboard.json")))
+SB = json.load(open(P("storyboard.json"), encoding="utf-8"))
 DUR = BEATS["duration"]
 NFRAMES = math.ceil(DUR * FPS)
 timing.init(BEATS, FPS)
@@ -47,7 +48,7 @@ def section_at(t):
         if x["start"] <= t: s = x
     return s
 
-TL = json.load(open(P("audio/timeline.json"))) if os.path.exists(P("audio/timeline.json")) else None   # narrated stories
+TL = json.load(open(P("audio/timeline.json"), encoding="utf-8")) if os.path.exists(P("audio/timeline.json")) else None   # narrated stories
 PAUSES = TL["pauses"] if TL else []
 
 def block_start(b):
@@ -77,6 +78,7 @@ def build_cuts():
             cuts.append({"t": t, "motif": b["motif"], "v": v + b.get("v0", 0), "hard": hard, "bstart": starts[i], "blk": b, "tr": tr,
                          "tr_dur": b.get("tr_dur", TR_DUR)})
             nxt = t + b.get("cut_every", 2.0)
+            if nxt > end - 1.0: break            # (snapping first could pull a far cut back onto the last beat)
             d = snap(nxt, downs)
             nxt = d if abs(d - nxt) <= 0.45 else snap(nxt, beats)
             ce = b.get("cut_every", 2.0); mn = min(1.0, ce * 0.5)
@@ -108,14 +110,81 @@ def pause_amount(t):
             return u * u * (3 - 2 * u)
     return 0.0
 
+# ---------------------------------------------------------------- scene transitions
+# Storyboard: block "trans" (first cut of the block), "cut_trans" (later cuts inside it), "trans_dur" / "cut_trans_dur";
+# top-level "trans" / "cut_trans" are the defaults. Without them: "flash" on section starts, "dissolve" elsewhere (v1 behaviour).
+# Kinds: dissolve, flash, zoom, iris, wipe, slide_up, slide_down, slide_left, slide_right, whip, blur, light
+# config "transitions" (list, cycled per cut: flash, glitch, slide, zoom, iris, whip, bars) overrides the storyboard kinds.
 TRANS = CFG.get("transitions")
 RESAMPLE = Image.NEAREST if CFG["scene_resample"] == "nearest" else Image.BILINEAR   # nearest: crisp pixel art
-def _zoom(a, z):
-    """Zoom a float image about its centre (z > 1 enlarges)."""
-    im = Image.fromarray(np.clip(a, 0, 255).astype(np.uint8)); w, h = BW / z, BH / z
-    return np.asarray(im.resize((BW, BH), Image.BILINEAR, box=((BW - w) / 2, (BH - h) / 2, (BW + w) / 2, (BH + h) / 2)), np.float32)
+TRANS_DUR = {"dissolve": 0.2, "flash": 0.0, "zoom": 0.45, "iris": 0.5, "wipe": 0.45, "slide_up": 0.4, "slide_down": 0.4,
+             "slide_left": 0.4, "slide_right": 0.4, "whip": 0.35, "blur": 0.6, "light": 0.6}
+_RAD = np.sqrt(((_xx - BW / 2) / (BW / 2)) ** 2 + ((_yy - BH / 2) / (BW / 2)) ** 2).astype(np.float32)[..., None]
+_DIAG = ((_xx / BW) * 0.45 + (_yy / BH) * 0.55).astype(np.float32)[..., None]
+_LEAK = np.clip(1 - np.sqrt(((_xx - BW * 0.1) / BW) ** 2 + ((_yy - BH * 0.25) / BH) ** 2) * 1.3, 0, 1).astype(np.float32)[..., None]   # warm light leak mask
 
-def transition(kind, a, b, u, ci):
+def cut_transition(ci):
+    c = CUTS[ci]; b = c["blk"]
+    if c["v"] == 0:
+        name = b.get("trans") or ("flash" if c["hard"] else SB.get("trans", "dissolve")); dur = b.get("trans_dur")
+    else:
+        name = b.get("cut_trans") or SB.get("cut_trans", "dissolve"); dur = b.get("cut_trans_dur")
+    return name, TRANS_DUR.get(name, 0.3) if dur is None else dur
+
+def _zoom(a, z):
+    """Centre zoom of a float image (z > 1 enlarges)."""
+    if abs(z - 1) < 1e-3: return a
+    w, h = BW / z, BH / z
+    if z > 1:
+        im = Image.fromarray(np.clip(a, 0, 255).astype(np.uint8))
+        return np.asarray(im.resize((BW, BH), Image.BILINEAR, box=((BW - w) / 2, (BH - h) / 2, (BW + w) / 2, (BH + h) / 2)), np.float32)
+    im = Image.fromarray(np.clip(a, 0, 255).astype(np.uint8)).resize((int(BW * z), int(BH * z)), Image.BILINEAR)
+    out = np.zeros_like(a); x0, y0 = (BW - im.width) // 2, (BH - im.height) // 2
+    out[y0:y0 + im.height, x0:x0 + im.width] = np.asarray(im, np.float32); return out
+
+def _shift(a, dx, dy):
+    """Shift a float image by (dx, dy) px, uncovered area black."""
+    dx, dy = int(round(dx)), int(round(dy)); out = np.zeros_like(a)
+    ys, yd = (slice(0, BH - dy), slice(dy, BH)) if dy >= 0 else (slice(-dy, BH), slice(0, BH + dy))
+    xs, xd = (slice(0, BW - dx), slice(dx, BW)) if dx >= 0 else (slice(-dx, BW), slice(0, BW + dx))
+    if abs(dx) < BW and abs(dy) < BH: out[yd, xd] = a[ys, xs]
+    return out
+
+def _blur(a, r):
+    if r < 0.5: return a
+    return np.asarray(Image.fromarray(np.clip(a, 0, 255).astype(np.uint8)).filter(ImageFilter.GaussianBlur(r)), np.float32)
+
+def transition(name, A, B, k):
+    """Storyboard transition: blend the previous cut A into the new cut B; k = 0..1 progress."""
+    e = k * k * (3 - 2 * k)
+    if name == "zoom":
+        out = _zoom(A, 1 + 0.6 * e) * (1 - e) + _zoom(B, 1.3 - 0.3 * e) * e
+        return out + (255 - out) * 0.25 * math.sin(math.pi * k)
+    if name == "iris":
+        r = e * 2.15; m = np.clip((r - _RAD) / 0.1, 0, 1)
+        ring = np.exp(-((_RAD - r) / 0.045) ** 2) * 0.7 * (1 - e * 0.5)
+        out = A * (1 - m) + B * m
+        return out + (np.array([255, 225, 170], np.float32) - out) * ring
+    if name == "wipe":
+        pos = e * 1.25 - 0.12; m = np.clip((pos - _DIAG) / 0.06, 0, 1)
+        ring = np.exp(-((_DIAG - pos) / 0.02) ** 2) * 0.8
+        out = A * (1 - m) + B * m
+        return out + (255 - out) * ring
+    if name.startswith("slide_") or name == "whip":
+        dx, dy = {"slide_up": (0, -1), "slide_down": (0, 1), "slide_left": (-1, 0), "slide_right": (1, 0), "whip": (-1, 0)}[name]
+        L = BW if dx else BH
+        def at(o): return _shift(A, dx * o, dy * o) + _shift(B, dx * (o - L), dy * (o - L))
+        if name != "whip": return at(e * L)
+        return sum(at((e + j * 0.035) * L) for j in range(-2, 3)) / 5          # whip: motion-blurred push
+    if name == "blur":
+        out = _blur(A, 28 * e) * (1 - e) + _blur(B, 28 * (1 - e)) * e
+        return out + (255 - out) * 0.18 * math.sin(math.pi * k)
+    if name == "light":
+        out = A * (1 - e) + B * e
+        return out + (np.array([255, 196, 150], np.float32) - out) * _LEAK * 0.9 * math.sin(math.pi * k)
+    return A * (1 - k) + B * k                                                 # dissolve
+
+def cfg_transition(kind, a, b, u, ci):
     """Blend the previous scene a into the new one b, u = 0..1 over TR_DUR. Each style is an attention-grabbing pattern interrupt."""
     e = 1 - (1 - u) ** 3
     if kind == "cut": return b
@@ -170,16 +239,16 @@ def background(t, voff=0, compose=True):
     img = draw_cut(ci, t, voff)
     kind = section_at(t)["kind"]
     zoom_punch = 0.0
-    if cut["hard"]:
+    tname, tdur = cut_transition(ci)
+    if ci > 0 and TRANS:
+        if lt < TR_DUR: img = cfg_transition(TRANS[ci % len(TRANS)], draw_cut(ci - 1, t, voff), img, lt / TR_DUR, ci)
+    elif tname == "flash" and ci > 0:
         zoom_punch = 0.14 * math.exp(-lt / 0.25)
         img = img + (255 - img) * (0.6 * math.exp(-lt / 0.12))            # flash
-    elif ci > 0 and cut.get("tr") and lt < cut["tr_dur"]:
-        img = transition(cut["tr"], draw_cut(ci - 1, t, voff), img, lt / cut["tr_dur"], ci)
-    elif ci > 0 and TRANS and lt < TR_DUR:
-        img = transition(TRANS[ci % len(TRANS)], draw_cut(ci - 1, t, voff), img, lt / TR_DUR, ci)
-    elif ci > 0 and not TRANS and lt < 0.2:
-        k = lt / 0.2
-        img = draw_cut(ci - 1, t, voff) * (1 - k) + img * k                         # soft cross-dissolve
+    elif ci > 0 and cut.get("tr") and lt < cut["tr_dur"]:                  # per-block "transition(s)": cfg styles
+        img = cfg_transition(cut["tr"], draw_cut(ci - 1, t, voff), img, lt / cut["tr_dur"], ci)
+    elif ci > 0 and lt < tdur:
+        img = transition(tname, draw_cut(ci - 1, t, voff), img, lt / tdur)
     if CFG["vignette"]: img = img * VIG
     if CFG["beat_fx"]:
         sh = int(round(3 * pulse(t) ** 1.5))
@@ -276,6 +345,7 @@ class LineGfx:
         panel = Image.new("RGBA", (W, bh))
         ImageDraw.Draw(panel).rounded_rectangle([tb[0] - 40 * S, tb[1] - 26 * S, tb[2] + 40 * S, tb[3] + 26 * S], int(48 * S), fill=TC["panel"])
         panel = panel.filter(ImageFilter.GaussianBlur(18 * S))
+        self.panel, self.text = panel, base
         self.base = Image.alpha_composite(panel, base)
         self.sung = sung
         self.glow = gl.filter(ImageFilter.GaussianBlur(16 * S))
@@ -300,7 +370,15 @@ class LineGfx:
             elif t >= w["s"]:
                 k = (t - w["s"]) / max(0.05, w["e"] - w["s"])
                 md.rectangle([x0, y0, x0 + (x1 - x0) * k, y1], fill=255); active = (x0, y0, x1, y1)
-        img = self.base.copy()
+        if UNSUNG_A < 1:      # words not reached yet stay dim and light up just before they are sung
+            dim = Image.new("L", (self.w, self.h), 255); dd = ImageDraw.Draw(dim)
+            for w, (x0, y0, x1, y1) in zip(L["words"], self.boxes):
+                k = min(1.0, max(0.0, (t - (w["s"] - 0.12)) / 0.12))
+                if k < 1: dd.rectangle([x0 - 6 * S, y0 - 14 * S, x1 + 6 * S, y1 + 14 * S], fill=int(255 * (UNSUNG_A + (1 - UNSUNG_A) * k)))
+            tx = self.text.copy(); tx.putalpha(Image.fromarray((np.asarray(tx.getchannel("A"), np.uint16) * np.asarray(dim) // 255).astype(np.uint8)))
+            img = Image.alpha_composite(self.panel, tx)
+        else:
+            img = self.base.copy()
         gk = {"chorus": 1.0, "pre": 0.8}.get(kind, 0.6)
         gmask = mask.point(lambda a: int(a * gk))
         img.paste(self.glow, (0, 0), Image.fromarray(np.minimum(np.asarray(gmask), np.asarray(self.glow)[..., 3]).astype(np.uint8)))
@@ -312,19 +390,135 @@ def gfx(i):
     if i not in GFX: GFX[i] = LineGfx(LINES[i])
     return GFX[i]
 
+# Line entrance / exit animation. config: "text_fx" (name or list cycled per line; a storyboard block's "text_fx" wins for
+# the lines that start inside it), "text_lead" (s shown before the first word), "text_exit" (s of the exit animation),
+# "text_overlap" (true: the old line leaves while the new one enters; false: never shown together).
+# Entrances: pop, rise, drop, zoom, blur, wide, swing, flip. "text_unsung_alpha" dims words until they are sung. Exits follow the entrance (rise -> leaves upwards, zoom -> grows...).
+TEXT_FX = CFG.get("text_fx", "pop")
+LEAD, EXIT, OVERLAP = CFG.get("text_lead", 0.08), CFG.get("text_exit", 0.15), CFG.get("text_overlap", False)
+UNSUNG_A = CFG.get("text_unsung_alpha", 1.0)   # < 1: words not sung yet are drawn at this opacity
+TIN = max(0.25, LEAD)          # entrance duration
+
 def lyrics_layers(t):
     out = []
     for i, L in enumerate(LINES):
         s, e = L["start"], L["end"]
         nxt = LINES[i + 1]["start"] if i + 1 < len(LINES) else 1e9
-        fin = min(0.08, max(0.0, s - (LINES[i - 1]["end"] if i else -1)))      # fade-in window, never before prev end
-        fout_end = min(e + 0.15, nxt)
+        prev_end = LINES[i - 1]["end"] if i else -1
+        if OVERLAP:
+            fin = min(LEAD, max(0.12, s - prev_end)); fout_end = min(e + EXIT, nxt + 0.25)
+        else:
+            fin = min(LEAD, max(0.0, s - prev_end)); fout_end = min(e + EXIT, nxt - min(LEAD, max(0.0, nxt - e)) * 0.5) if nxt < 1e9 else e + EXIT
+            fout_end = max(fout_end, e + 0.04)
         if t < s - fin or t > fout_end: continue
-        a = 1.0
-        if t < s: a = (t - (s - fin)) / max(fin, 1e-3)
-        elif t > e: a = 1 - (t - e) / max(fout_end - e, 1e-3)
-        out.append((i, max(0.0, min(1.0, a)), t - s))
+        u = min(1.0, max(0.0, (t - (s - fin)) / TIN))                     # entrance progress
+        q = min(1.0, max(0.0, (t - e) / max(fout_end - e, 1e-3))) if t > e else 0.0   # exit progress
+        out.append((i, u, q, t - s))
     return out
+
+def line_fx(i):
+    s = LINES[i]["start"]
+    if CUTS:
+        ci = max(0, int(np.searchsorted(CUT_T, s + 0.05, side="right") - 1))
+        if "text_fx" in CUTS[ci]["blk"]: return CUTS[ci]["blk"]["text_fx"]
+    return TEXT_FX[i % len(TEXT_FX)] if isinstance(TEXT_FX, list) else TEXT_FX
+
+def animate_line(layer, fx, u, q, pulse_sc):
+    """Apply entrance (u: 0->1) and exit (q: 0->1) animation to a lyric layer; returns (layer, dx, dy, alpha)."""
+    ei = 1 - (1 - u) ** 3; eo = q * q
+    sc, sx, sy, dy, blur, ang = pulse_sc, 1.0, 1.0, 0.0, 0.0, 0.0
+    if fx == "pop": sc *= 0.94 + 0.06 * ei
+    elif fx == "rise": dy += 80 * S * (1 - ei); blur += 7 * (1 - ei)
+    elif fx == "drop": dy -= 80 * S * (1 - ei); blur += 7 * (1 - ei)
+    elif fx == "zoom": sc *= 1.35 - 0.35 * ei; blur += 9 * (1 - ei)
+    elif fx == "blur": sc *= 1.06 - 0.06 * ei; blur += 16 * (1 - ei)
+    elif fx == "wide": sx = 1.3 - 0.3 * ei; blur += 5 * (1 - ei)
+    elif fx == "swing": ang = 7 * (1 - ei); dy += 30 * S * (1 - ei)
+    elif fx == "flip": sy = 0.12 + 0.88 * ei; blur += 4 * (1 - ei)          # unfolds vertically like a card
+    if q > 0:                                                    # exit
+        if fx == "flip": sy *= 1 - 0.85 * eo
+        elif fx in ("rise", "pop", "swing"): dy -= 70 * S * eo
+        elif fx == "drop": dy += 70 * S * eo
+        elif fx == "zoom": sc *= 1 + 0.25 * eo
+        elif fx == "wide": sx *= 1 + 0.25 * eo
+        else: sc *= 1 - 0.08 * eo
+        blur += 10 * eo
+    alpha = min(1.0, u * 1.6) * (1 - eo)
+    if abs(sc - 1) > 0.002 or abs(sx - 1) > 0.002 or abs(sy - 1) > 0.002:
+        layer = layer.resize((max(1, int(layer.width * sc * sx)), max(1, int(layer.height * sc * sy))), Image.BILINEAR)
+    if ang: layer = layer.rotate(ang, resample=Image.BILINEAR, expand=True)
+    if blur > 0.6: layer = layer.filter(ImageFilter.GaussianBlur(blur * S))
+    return layer, 0, dy, alpha
+
+# ---------------------------------------------------------------- titles (storyboard "titles": [{start, end, text, sub?, y?, size?,
+# font?, sub_font?, color?, glow?, stagger?}]) — letters rise in one by one with blur, the whole title blurs/spreads out at the end.
+class TitleGfx:
+    def __init__(self, T):
+        self.T = T
+        f = ImageFont.truetype(T.get("font") or FONT_B, int(T.get("size", 150) * S), index=T.get("font_index", 0))
+        col = tuple(T.get("color", TC["sung"])); glow = tuple(T.get("glow", TC["glow"]))
+        text = T["text"]
+        while f.getlength(text) > W - 100 * S and f.size > 30: f = ImageFont.truetype(T.get("font") or FONT_B, f.size - 6, index=T.get("font_index", 0))
+        asc, desc = f.getmetrics(); hh = asc + desc + int(60 * S)
+        x = (W - f.getlength(text)) / 2
+        self.chars = []
+        for ch in text:
+            cw = f.getlength(ch)
+            if ch.strip():
+                pad = int(40 * S)
+                im = Image.new("RGBA", (int(cw + 2 * pad + f.size), hh + 2 * pad))
+                d = ImageDraw.Draw(im)
+                d.text((pad, pad), ch, font=f, fill=glow + (255,), stroke_width=int(8 * S), stroke_fill=glow + (255,))
+                g = im.filter(ImageFilter.GaussianBlur(16 * S))
+                d2 = ImageDraw.Draw(g)
+                d2.text((pad, pad), ch, font=f, fill=col + (255,), stroke_width=int(3 * S), stroke_fill=tuple(TC["outline"]) + (200,))
+                self.chars.append((g, int(x - pad), -pad))
+            x += cw
+        self.h = hh
+        self.sub = None
+        if T.get("sub"):
+            fs = ImageFont.truetype(T.get("sub_font") or FONT_R, int(T.get("sub_size", 52) * S), index=T.get("font_index", 0))
+            im = Image.new("RGBA", (W, int(fs.size * 1.8)))
+            ImageDraw.Draw(im).text(((W - fs.getlength(T["sub"])) / 2, int(fs.size * 0.3)), T["sub"], font=fs, fill=(255, 255, 255, 235),
+                                    stroke_width=int(3 * S), stroke_fill=tuple(TC["outline"]) + (220,))
+            self.sub = im
+
+    def render(self, img, t):
+        T = self.T; t0, t1 = T["start"], T["end"]
+        if t < t0 or t > t1: return
+        st = T.get("stagger", 0.07); q = min(1.0, max(0.0, (t - (t1 - 0.7)) / 0.7)); eo = q * q
+        layer = Image.new("RGBA", (W, self.h + int(80 * S)))
+        for k, (g, x, y) in enumerate(self.chars):
+            u = min(1.0, max(0.0, (t - t0 - k * st) / 0.55))
+            if u <= 0: continue
+            ei = 1 - (1 - u) ** 3
+            c = g
+            if u < 1: c = c.filter(ImageFilter.GaussianBlur(10 * S * (1 - ei)))
+            if u < 1 or eo > 0:
+                a = np.asarray(c).copy(); a[..., 3] = (a[..., 3] * min(1.0, u * 1.4)).astype(np.uint8); c = Image.fromarray(a)
+            wob = 6 * S * math.sin(t * 2.2 + k * 0.6)
+            over(layer, c, x, y + 40 * S + 60 * S * (1 - ei) + wob)
+        if eo > 0:
+            layer = layer.resize((int(W * (1 + 0.3 * eo)), int(layer.height * (1 + 0.1 * eo))), Image.BILINEAR).filter(ImageFilter.GaussianBlur(14 * S * eo))
+            a = np.asarray(layer).copy(); a[..., 3] = (a[..., 3] * (1 - eo)).astype(np.uint8); layer = Image.fromarray(a)
+        cy = H * T.get("y", 0.5)
+        over(img, layer, (W - layer.width) // 2, cy - layer.height / 2)
+        if self.sub is not None:
+            u = min(1.0, max(0.0, (t - t0 - T.get("sub_delay", len(self.chars) * st + 0.3)) / 0.6))
+            if u > 0:
+                s = self.sub
+                a = np.asarray(s).copy(); a[..., 3] = (a[..., 3] * u * (1 - eo)).astype(np.uint8); s = Image.fromarray(a)
+                over(img, s, 0, cy + self.h * 0.55 + 20 * S * (1 - u))
+
+TITLES = [TitleGfx(T) for T in SB.get("titles", [])]
+
+def over(img, layer, x, y):
+    """alpha_composite that accepts layers bigger than the frame or partly outside it."""
+    x, y = int(x), int(y)
+    cx, cy = max(0, -x), max(0, -y)
+    w, h = min(layer.width - cx, img.width - max(0, x)), min(layer.height - cy, img.height - max(0, y))
+    if w <= 0 or h <= 0: return
+    img.alpha_composite(layer.crop((cx, cy, cx + w, cy + h)), (max(0, x), max(0, y)))
 
 def video_reader(f0):
     """Background video from frame f0: scaled/cropped to the output size, under a black cover (background.dim)."""
@@ -349,26 +543,28 @@ def frame(fi, bg=None):
     img = (bg if bg is not None else background(t)).convert("RGBA")
     kind = section_at(t)["kind"]
     p = pulse(t)
-    for i, a, since in lyrics_layers(t):
+    for T in TITLES: T.render(img, t)
+    for i, u, q, since in lyrics_layers(t):
         g = gfx(i)
         layer = g.render(t, kind)
         sc = 1 + ((0.045 if kind == "chorus" else 0.015) * p if CFG["text_pulse"] else 0)
-        if since < 0.25: sc *= 0.94 + 0.06 * (1 - (1 - max(0, since) / 0.25) ** 3)   # ease-in pop
-        dx = dy = 0.0; ang = 0.0
-        if CFG["text_anim"] == "dynamic":
-            u = max(0.0, min(1.0, since / 0.24)); e3 = 1 - (1 - u) ** 3; st = i % 4
+        if CFG["text_anim"] == "dynamic":      # v1 style: per-line punch-in cycled by line index
+            dx = dy = 0.0; ang = 0.0; a = min(1.0, u * 1.6) * (1 - q * q)
+            uu = max(0.0, min(1.0, since / 0.24)); e3 = 1 - (1 - uu) ** 3; st = i % 4
             if st == 0: sc *= 1 + 0.7 * (1 - e3)
             elif st == 1: dy = 150 * S * (1 - e3)
             elif st == 2: ang = 14 * (1 - e3); sc *= 0.7 + 0.3 * e3
             else: dy = -150 * S * (1 - e3); sc *= 1.15 - 0.15 * e3
             if t > LINES[i]["end"]: sc *= 1 + 0.35 * min(1.0, (t - LINES[i]["end"]) / 0.15)
-        if abs(sc - 1) > 0.002:
-            layer = layer.resize((int(g.w * sc), int(g.h * sc)), Image.BILINEAR)
-        if ang: layer = layer.rotate(ang * (1 if i % 8 < 4 else -1), expand=True, resample=Image.BILINEAR)
+            if abs(sc - 1) > 0.002: layer = layer.resize((int(g.w * sc), int(g.h * sc)), Image.BILINEAR)
+            if ang: layer = layer.rotate(ang * (1 if i % 8 < 4 else -1), expand=True, resample=Image.BILINEAR)
+        else:
+            layer, dx, dy, a = animate_line(layer, line_fx(i), u, q, sc)
+        if a <= 0.01: continue
         if a < 1:
             al = np.asarray(layer).copy(); al[..., 3] = (al[..., 3] * a).astype(np.uint8); layer = Image.fromarray(al)
         cy = H * 0.8 if CFG["caption_position"] == "bottom" else H / 2
-        img.alpha_composite(layer, (int((W - layer.width) // 2 + dx), int(cy - layer.height / 2 + dy)))
+        over(img, layer, (W - layer.width) / 2 + dx, cy - layer.height / 2 + dy)
     return img.convert("RGB")
 
 # ---------------------------------------------------------------- encode
@@ -405,6 +601,7 @@ if __name__ == "__main__":
     ap.add_argument("--frame", type=float, nargs="+")
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--jobs", type=int, default=CFG["jobs"])
+    ap.add_argument("--limit", type=int, help="render at most N segments in this call (long renders in several runs)")
     a = ap.parse_args()
     os.makedirs(P("out"), exist_ok=True)
     if a.frame:
@@ -422,7 +619,7 @@ if __name__ == "__main__":
         parts = [(s, min(f1, s + step), PR.rdir(f"preview_{i:02d}.mp4")) for i, s in enumerate(range(f0, f1, step))]
         with Pool(n) as pool: pool.map(render_range, parts)
         lst = PR.rdir("preview_list.txt")
-        open(lst, "w").write("".join(f"file '{x[2]}'\n" for x in parts))
+        open(lst, "w", encoding="utf-8").write("".join(f"file '{x[2]}'\n" for x in parts))
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", lst, "-c", "copy", PR.rdir("preview_v.mp4")], check=True)
         mux(PR.rdir("preview_v.mp4"), PR.out_name("preview.mp4"), float(f0 / FPS), float((f1 - f0) / FPS))
         print("out/preview.mp4"); sys.exit()
@@ -433,10 +630,14 @@ if __name__ == "__main__":
         segs.append((f0, min(NFRAMES, f0 + int(round(SEG * FPS))), path))
     todo = [s for s in segs if not os.path.exists(s[2])]
     print(f"{len(segs)} segments, {len(todo)} to render, {NFRAMES} frames")
+    left = todo[a.limit:] if a.limit else []
+    if a.limit: todo = todo[:a.limit]
     with Pool(a.jobs) as pool:
         for pth in pool.imap_unordered(render_range, todo): print("done", os.path.basename(pth), flush=True)
+    if left:
+        print(f"{len(left)} segments left: run again (without --force) to continue"); sys.exit()
     lst = PR.rdir("segments.txt")
-    open(lst, "w").write("".join(f"file '{s[2]}'\n" for s in segs))
+    open(lst, "w", encoding="utf-8").write("".join(f"file '{s[2]}'\n" for s in segs))
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", lst, "-c", "copy", PR.rdir("full_v.mp4")], check=True)
     mux(PR.rdir("full_v.mp4"), PR.output)
     print(PR.output)

@@ -2,7 +2,7 @@
 import math
 from functools import lru_cache
 import numpy as np
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 BW, BH = 540, 960
 # named palette; a project can override any of these in config.json -> "palette"
@@ -74,9 +74,15 @@ class Ctx:
         self.gimg = Image.new("RGB", (BW, BH))
         self.g = ImageDraw.Draw(self.gimg, "RGBA")
     def finish(self, glow_r=7, glow_k=1.0):
-        gl = np.asarray(self.gimg.filter(ImageFilter.GaussianBlur(glow_r)), np.float32) * glow_k
-        a = np.asarray(self.img, np.float32)
-        return 255 - (255 - a) * (255 - np.minimum(gl, 255)) / 255   # screen blend
+        w, h = self.gimg.size
+        if glow_r >= 8 and w * h > 600_000:   # big canvas: blur at 1/4 resolution (same soft look, ~10x faster)
+            g = self.gimg.resize((w // 4, h // 4), Image.BOX).filter(ImageFilter.GaussianBlur(glow_r / 4)).resize((w, h), Image.BILINEAR)
+        else:
+            g = self.gimg.filter(ImageFilter.GaussianBlur(glow_r))
+        if glow_k != 1.0:
+            lut = [min(255, int(v * glow_k)) for v in range(256)]
+            g = g.point(lut * 3)
+        return np.asarray(ImageChops.screen(self.img.convert("RGB"), g), np.float32)   # screen blend (in C)
 
 def R(seed):
     return np.random.default_rng(seed)

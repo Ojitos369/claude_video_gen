@@ -8,7 +8,7 @@ install: install-engine install-back install-front   ## everything (engine venv,
 
 install-engine:        ## video engine environment (.venv): torch cu124, demucs, whisper, librosa, moderngl...
 	test -d .venv || uv venv .venv --python 3.11
-	uv pip install --python .venv/bin/python -r requirements.txt
+	uv pip install --python .venv/bin/python -r requirements.txt --index-strategy unsafe-best-match
 
 install-back:
 	test -d back/.venv || uv venv back/.venv --python 3.12

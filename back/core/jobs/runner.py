@@ -305,7 +305,7 @@ class Job:
         prompt = "(proyecto creado fuera de la app)"
         p = os.path.join(self.dir, "prompt.md")
         if os.path.exists(p):
-            with open(p, errors="replace") as f:
+            with open(p, encoding="utf-8", errors="replace") as f:
                 prompt = f.read()[:3000]
         created = datetime.fromtimestamp(os.path.getctime(self.dir)).isoformat(timespec="seconds")
         self.save(id=self.id, name=self.id, prompt=prompt, files=[], status="done", created=created, cost=0.0, model=CLAUDE_MODEL,
@@ -315,7 +315,7 @@ class Job:
         return os.path.exists(self.meta_path)
 
     def meta(self):
-        with open(self.meta_path) as f:
+        with open(self.meta_path, encoding="utf-8", errors="replace") as f:
             return json.load(f)
 
     def save(self, **changes):
@@ -323,14 +323,14 @@ class Job:
         m.update(changes, updated=now())
         os.makedirs(self.app, exist_ok=True)
         tmp = self.meta_path + ".tmp"
-        with open(tmp, "w") as f:
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(m, f, ensure_ascii=False, indent=1)
         os.replace(tmp, self.meta_path)
         return m
 
     def events(self, since=0):
         if not os.path.exists(self.events_path): return []
-        with open(self.events_path) as f:
+        with open(self.events_path, encoding="utf-8", errors="replace") as f:
             ev = [json.loads(line) for line in f if line.strip()]
         return ev[since:]
 
@@ -358,7 +358,7 @@ class Job:
     def progress(self):
         p = os.path.join(self.dir, "PROGRESO.md")
         if not os.path.exists(p): return ""
-        with open(p, errors="replace") as f:
+        with open(p, encoding="utf-8", errors="replace") as f:
             return f.read()
 
     def summary(self):
@@ -383,7 +383,7 @@ class Job:
     def format(self):
         """Output format as configured now in the project's config.json (e.g. what claude chose for a manual format)."""
         try:
-            with open(os.path.join(self.dir, "config.json")) as f:
+            with open(os.path.join(self.dir, "config.json"), encoding="utf-8", errors="replace") as f:
                 c = json.load(f)
         except (OSError, ValueError):
             return None
@@ -411,7 +411,7 @@ class Runner:
             i = len(job.events())
         ev = {"i": i, "t": time.time(), "kind": kind, **data}
         self.counters[job.id] = i + 1
-        with open(job.events_path, "a") as f:
+        with open(job.events_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(ev, ensure_ascii=False) + "\n")
         await manager.broadcast_to_group(json.dumps({"type": "event", "event": ev}, ensure_ascii=False), job.id)
         return ev
@@ -474,12 +474,12 @@ class Runner:
         job = Job(job_id)
         os.makedirs(job.app, exist_ok=True)
         saved = await save_uploads(job.dir, uploads)
-        with open(os.path.join(job.dir, "solicitud.md"), "w") as f:
+        with open(os.path.join(job.dir, "solicitud.md"), "w", encoding="utf-8") as f:
             f.write(f"# Solicitud\n\n{prompt}\n\n## Archivos subidos\n" + "".join(f"- {s['name']}\n" for s in saved))
         model, effort = valid_model(model), valid_effort(effort)
         aspect, aspect_label, aspect_note = resolve_aspect(aspect, job.dir, saved, aspect_text)
         if aspect != "manual":   # starting config: the chosen format wins over the engine defaults
-            with open(os.path.join(job.dir, "config.json"), "w") as f:
+            with open(os.path.join(job.dir, "config.json"), "w", encoding="utf-8") as f:
                 json.dump({"aspect": aspect}, f, indent=1)
         job.save(id=job_id, name=name or prompt[:60], prompt=prompt, files=saved, status="queued", created=now(), model=model, effort=effort,
                  aspect=aspect, aspect_label=aspect_label, tools=valid_tools(tools),
@@ -509,7 +509,7 @@ class Runner:
                        + (f" (archivos: {', '.join(x['files'])})" if x.get("files") else "") for x in job.take_inbox())
         if text or saved or not left:
             text = text or "Agregué archivos nuevos al proyecto: úsalos donde corresponda."
-            with open(os.path.join(job.dir, "solicitud.md"), "a") as f:
+            with open(os.path.join(job.dir, "solicitud.md"), "a", encoding="utf-8") as f:
                 f.write(f"\n## Pedido de cambios · {now().replace('T', ' ')}\n\n{text}\n"
                         + (("\nArchivos agregados:\n" + "".join(f"- {s['name']}\n" for s in saved)) if saved else ""))
             await self.emit(job, "user", text=text, files=[s["name"] for s in saved], model=model, effort=effort)
@@ -665,7 +665,7 @@ class Runner:
         else:
             err = ""
             try:
-                with open(p["err"], errors="replace") as fe: err = fe.read().strip()
+                with open(p["err"], encoding="utf-8", errors="replace") as fe: err = fe.read().strip()
             except OSError:
                 pass
             if run.get("resume") and result is None and "No conversation found" in err:

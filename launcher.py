@@ -92,12 +92,15 @@ def engine_env(install):
     if install:
         uv = which("uv") or "uv"
         run([uv, "venv", os.path.join(ROOT, ".venv"), "--python", "3.11"])
-        run([uv, "pip", "install", "--python", ENGINE_PY, "-r", os.path.join(ROOT, "requirements.txt")])
+        run([uv, "pip", "install", "--python", ENGINE_PY, "-r", os.path.join(ROOT, "requirements.txt"),
+             "--index-strategy", "unsafe-best-match"])   # pytorch index also hosts old certifi etc.
     else:
         say("AVISO: falta el entorno del motor (.venv). La app arranca, pero Claude no podrá renderizar videos.")
         say("       Instálalo con:  run.sh --install-engine  /  run.bat --install-engine  (descarga torch con CUDA, ~5 GB)")
 
 def find_claude():
+    from dotenv import load_dotenv   # back/.env (VS_CLAUDE_BIN...) must be visible here, not only in the server
+    load_dotenv(os.path.join(BACK, ".env"))
     sys.path.insert(0, BACK)
     from core.conf.claude_bin import find_claude as fc, command
     path = fc(os.environ.get("VS_CLAUDE_BIN"))
