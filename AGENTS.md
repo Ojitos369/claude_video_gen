@@ -1,0 +1,1 @@
+../../../Obsidian/Agents/AGENTS.md

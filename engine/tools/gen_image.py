@@ -76,7 +76,7 @@ def openai_api(prompt, model, aspect, transparent, ref, proj):
     return base64.b64decode(d["data"][0]["b64_json"]), rec
 
 
-def openai_subscription(prompt, aspect, transparent, ref, proj):
+def openai_subscription(prompt, aspect, transparent, ref, proj, model=""):
     """ChatGPT subscription through the official Codex CLI (login with `codex login`): codex saves the image it generates
     under ~/.codex/generated_images; we pick the new file."""
     codex = find_cli("codex", os.environ.get("CODEX_BIN"))
@@ -86,7 +86,7 @@ def openai_subscription(prompt, aspect, transparent, ref, proj):
     t0 = time.time()
     extra = f" Proporción {aspect}." if aspect else ""
     extra += " Fondo transparente." if transparent else ""
-    msg = (f"Usa tu herramienta de generación de imágenes para crear UNA imagen: {prompt}.{extra} "
+    msg = (f"Usa tu herramienta de generación de imágenes{f' con el modelo {model}' if model else ''} para crear UNA imagen: {prompt}.{extra} "
            "No escribas código ni archivos; solo genera la imagen y responde 'listo'.")
     cmd = command(codex) + ["exec", "--skip-git-repo-check", "--ephemeral", "-s", "read-only", msg]
     if ref: cmd[-1:-1] = ["-i", ref, "--"]   # -i takes a list of files: "--" ends it so the prompt stays positional
@@ -126,7 +126,7 @@ def main():
     if provider == "google":
         data, rec = google(a.prompt, model, a.aspect, ref, proj)
     elif provider == "openai" and s["providers"]["openai"]["auth"] == "subscription":
-        (data, rec), model = openai_subscription(a.prompt, a.aspect, a.transparent, ref, proj), "chatgpt (codex)"
+        (data, rec), model = openai_subscription(a.prompt, a.aspect, a.transparent, ref, proj, model), f"chatgpt (codex) {model}".strip()
     elif provider == "openai":
         data, rec = openai_api(a.prompt, model, a.aspect, a.transparent, ref, proj)
     else:
